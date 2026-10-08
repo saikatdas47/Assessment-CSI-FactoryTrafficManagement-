@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Factory Traffic Management</title>
+</head>
+<body>
+<main>
+  <header>
+    <div><p class="eyebrow">CSI SMART TECH · FACTORY OPERATIONS</p><h1>Factory traffic dashboard</h1><p>Choose a scenario → watch the signals → vehicles leave on green.</p></div>
+    <strong class="junction-title">Junction A</strong><select id="junction" hidden><option value="A">A</option></select>
+  </header>
+  <div class="connection-bar"><div class="connection-status"><span id="live-state" class="live-badge">CONNECTING</span><span id="connection">Connecting to backend…</span></div><span>Updates every second</span></div>
+  <div class="overview-row">
+    <section class="status-strip">
+      <div class="status-values"><span>Mode <strong id="mode">—</strong></span><span>Movement <strong id="phase">—</strong></span><span>Controller <strong id="controller">—</strong></span><span>Waiting <strong id="total">0</strong></span></div>
+      <small id="mode-help"></small><small id="phase-help" hidden></small>
+      <span id="emergency-banner" aria-live="polite"></span>
+      <div class="notifications" id="notifications" hidden><div id="error" role="alert"></div><div id="feedback" role="status"></div></div>
+      <div id="state-notice" class="alert" hidden></div>
+    </section>
+    <button id="scenario-normal" class="scenario-card"><strong>Normal traffic</strong><span>N 3 · S 2 · E 3 · W 2</span><small>Mixed traffic · click to add</small></button>
+    <button id="scenario-priority" class="scenario-card"><strong>Truck priority</strong><span>N 4 cars · E 3 trucks · W 2 forklifts</span><small>Watch priority and waiting</small></button>
+    <button id="scenario-emergency" class="scenario-card emergency-card"><strong>Emergency</strong><span>1 emergency on the opposing road</span><small>Watch safe preemption</small></button>
+  </div>
+  <div class="columns">
+    <section class="panel">
+      <div class="section-heading"><span class="step">1</span><div><h2 id="live-intersection">Live intersection</h2><p>Large light = confirmed state. Requested state appears underneath.</p></div></div>
+      <div class="intersection" id="intersection"><div class="road-center">JUNCTION</div></div>
+      <div class="signal-legend"><span class="dot green"></span> Go <span class="dot yellow"></span> Changing <span class="dot red"></span> Stop <span class="dot unknown"></span> Unconfirmed</div>
+      <div class="transition"><strong>Safe switching sequence</strong><div><span>Green</span><b>→</b><span>Yellow · 5s</span><b>→</b><span>All red · 2s</span><b>→</b><span>Next green</span></div><p id="transition-help">Waiting for junction state…</p></div>
+      <div id="alerts" aria-live="polite"></div>
+    </section>
+    <section class="panel">
+      <h2 id="vehicle-simulation">Vehicle simulation</h2>
+      <div class="form-row"><label>Vehicle ID<input id="vehicle" value="VH-001" maxlength="100"></label><label>Direction<select id="direction"><option>NORTH</option><option>SOUTH</option><option>EAST</option><option>WEST</option></select></label></div>
+      <fieldset id="type"><legend>Vehicle type</legend>
+        <label><input type="radio" name="vehicle-type" value="FORKLIFT"><strong>Forklift</strong></label>
+        <label><input type="radio" name="vehicle-type" value="TRUCK"><strong>Delivery truck</strong></label>
+        <label><input type="radio" name="vehicle-type" value="MATERIAL_VEHICLE"><strong>Material-carrying vehicle</strong></label>
+        <label><input type="radio" name="vehicle-type" value="EMPLOYEE_VEHICLE" checked><strong>Employee transport</strong></label>
+        <label class="emergency-choice"><input type="radio" name="vehicle-type" value="EMERGENCY"><strong>Emergency vehicle</strong></label>
+      </fieldset>
+      <div class="buttons"><button id="arrive">Vehicle arrives</button><button id="clear" class="secondary">Vehicle clears</button></div>
+      <p class="hint">Simulated vehicles leave every 3 seconds on confirmed green. You can also clear one manually.</p>
+      <hr>
+      <h3 id="manual-control">Manual control</h3>
+      <label>Priority direction<select id="manual-direction"><option>NORTH</option><option>SOUTH</option><option>EAST</option><option>WEST</option></select></label>
+      <div class="buttons"><button id="manual">Request green</button><button id="automatic" class="secondary">Return to automatic</button></div>
+      <p id="manual-help" class="hint">Manual control lasts 60 seconds. Emergency takes priority.</p>
+    </section>
+  </div>
+  <section class="panel">
+    <h2 id="waiting-vehicles">Waiting vehicles</h2>
+    <div class="table-wrap"><table><thead><tr><th>Vehicle ID</th><th>Direction</th><th>Type</th><th>Waiting time</th><th>Action</th></tr></thead><tbody id="vehicles"></tbody></table></div>
+  </section>
+  <details class="panel">
+    <summary id="device-health">Controller &amp; failure tests</summary>
+    <p class="hint">Optional tests: turn a device offline or withhold its confirmation to see traffic pause safely. Restore the device online, then recover.</p><p id="simulator"></p>
+    <div class="buttons"><button id="ack">Confirm pending command</button><button id="offline" class="danger secondary">Controller offline</button><button id="recover" class="secondary">Recover controller</button></div>
+    <details class="test-scenarios">
+      <summary>Test scenarios — duplicate event, missing ACK and device failure</summary>
+      <div class="buttons"><button id="duplicate" class="secondary">Repeat last vehicle event</button><button id="toggle-ack" class="secondary">Use manual confirmation</button><button id="nack" class="danger secondary">Reject pending command</button></div>
+      <div class="form-row"><label>Device<select id="device"><option value="SIGNAL_CONTROLLER">Physical controller</option><option value="SENSOR">Vehicle sensor</option><option value="SIGNAL">Traffic signal</option></select></label><label>Direction<select id="device-direction"><option>NORTH</option><option>SOUTH</option><option>EAST</option><option>WEST</option></select></label></div>
+      <div class="buttons"><button id="device-offline" class="danger secondary">Device offline</button><button id="device-online" class="secondary">Device online</button></div>
+      <p class="hint">For a device fault: report that device online, then recover. With manual ACK, confirm within 5 seconds or test the timeout.</p>
+    </details>
+    <div id="pending">No pending command</div>
+  </details>
+  <section class="panel activity-panel"><h2>Recent activity</h2><div id="history"></div></section>
+</main>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

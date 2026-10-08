@@ -1,0 +1,21 @@
+{
+  "name": "factory-traffic-backend",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js",
+    "test": "node --test tests/*.test.js",
+    "test:atlas": "RUN_ATLAS_TESTS=true node --test tests/atlas.test.js"
+  },
+  "dependencies": {
+    "express": "^5.1.0",
+    "mongoose": "^8.19.0",
+    "dotenv": "^16.6.1",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.10"
+  }
+}

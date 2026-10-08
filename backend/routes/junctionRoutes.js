@@ -1,0 +1,13 @@
+import { Router } from "express";
+import * as controller from "../controllers/junctionController.js";
+const router = Router();
+router.get("/junctions", controller.list);
+router.post("/junctions", controller.create);
+router.get("/junctions/:id", controller.detail);
+router.get("/junctions/:id/status", controller.detail);
+router.get("/junctions/:id/history", controller.history);
+router.post("/junctions/:id/commands", controller.control);
+router.post("/sensor-events", controller.sensor);
+router.post("/junctions/:id/scenarios", controller.scenario);
+router.post("/controller-events", controller.controller);
+export default router;

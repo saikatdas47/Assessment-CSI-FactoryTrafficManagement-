@@ -1,0 +1,13 @@
+
+> factory-traffic-backend@1.0.0 test:atlas
+> RUN_ATLAS_TESTS=true node --test tests/atlas.test.js
+
+✔ live Atlas: atomic events, pending-command restart, legacy maps, idempotency and explicit recovery (11021.940458ms)
+ℹ tests 1
+ℹ suites 0
+ℹ pass 1
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 11298.887584

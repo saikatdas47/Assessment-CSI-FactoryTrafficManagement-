@@ -1,0 +1,18 @@
+services:
+  - type: web
+    name: factory-traffic-management
+    runtime: node
+    buildCommand: npm run build
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: 22.16.0
+      - key: STORAGE
+        value: mongodb
+      - key: MONGODB_DB_NAME
+        value: factory_traffic
+      - key: AUTO_ACK
+        value: "true"
+      - key: MONGODB_URI
+        sync: false
