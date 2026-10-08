@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { sensorEvent, record } from "./trafficEngine.js";
-import { directions } from "../config/trafficConfig.js";
+import { directions, demo } from "../config/trafficConfig.js";
 
 export function isTrafficSimulationEnabled() {
-  return process.env.TRAFFIC_SIMULATION !== "false";
+  return demo.automatic_departures;
 }
 
 function eventFor(junction, vehicle, now, eventType) {
@@ -133,10 +133,13 @@ export function simulateDepartures(junction, now, enabled) {
     const confirmation = junction.green_confirmation;
     let timer = junction.simulation_green_since[direction];
     if (!timer || timer.command_id !== confirmation.command_id) {
-      timer = { command_id: confirmation.command_id, since: now };
+      timer = { command_id: confirmation.command_id, since: now, interval_ms: demo.departure_interval };
       junction.simulation_green_since[direction] = timer;
     }
-    const readyAt = Math.max(timer.since, vehicle.received_at) + 3000;
+    if (!timer.interval_ms) {
+      timer.interval_ms = demo.departure_interval;
+    }
+    const readyAt = Math.max(timer.since, vehicle.received_at) + timer.interval_ms;
     if (now < readyAt) {
       continue;
     }
@@ -145,5 +148,6 @@ export function simulateDepartures(junction, now, enabled) {
     const event = eventFor(junction, vehicle, now, "VEHICLE_CLEARED");
     sensorEvent(junction, event, now);
     timer.since = now;
+    timer.interval_ms = demo.departure_interval;
   }
 }

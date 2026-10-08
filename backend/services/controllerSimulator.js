@@ -1,13 +1,13 @@
 import { acknowledge } from "./trafficEngine.js";
-let automatic = process.env.AUTO_ACK === "true";
+import { demo } from "../config/trafficConfig.js";
 export function isAutomatic() {
-  return automatic;
+  return demo.automatic_ack;
 }
 export function setAutomatic(value) {
-  automatic = value;
+  demo.automatic_ack = value;
 }
 export function simulateController(junction, now) {
-  if (automatic && junction.pending && junction.controller_status !== "OFFLINE") {
+  if (demo.automatic_ack && junction.pending && junction.controller_status !== "OFFLINE") {
     if (junction.mode === "FAILURE") {
       if (junction.controller_status !== "ONLINE") {
         return;

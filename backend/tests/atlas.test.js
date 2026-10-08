@@ -90,6 +90,13 @@ test(
     try {
       child = await start();
       assert.equal((await api("/health")).data.storage, "mongodb");
+      const settings = (await api("/api/settings")).data;
+      settings.values.timing.manual = 65000;
+      settings.values.scheduling.waiting_multiplier = 2;
+      settings.values.demo.automatic_departures = false;
+      assert.equal((await api("/api/junctions", { id: "B" })).code, 201);
+      assert.equal((await api("/api/settings", { values: settings.values, revision: settings.revision })).code, 200);
+
       const truck = {
         event_id: "truck-1",
         junction_id: "A",
@@ -141,10 +148,21 @@ test(
         serverSelectionTimeoutMS: 10000
       });
       const collection = mongoose.connection.db.collection("junctions");
+      const savedSettings = await mongoose.connection.db.collection("settings").findOne({ _id: "traffic" });
+      assert.deepEqual(savedSettings.values, settings.values);
+      assert.equal(savedSettings.revision, settings.revision + 1);
+      assert.ok(await collection.findOne({ _id: "B" }));
+
       let saved = await collection.findOne({ _id: "A" });
       assert.equal(saved.state.vehicles.length, 2);
       assert.ok(saved.state.processed[truck.event_id]);
-      assert.equal(saved.state.pending.command_id, oldCommand.command_id);
+      assert.deepEqual(saved.state.pending, oldCommand);
+      assert.equal(saved.state.mode, "EMERGENCY");
+      assert.equal(saved.state.sequences.NORTH, 1);
+      assert.equal(saved.state.sequences.EAST, 1);
+      assert.ok(saved.state.vehicles[1].emergency_expires_at);
+      assert.ok(saved.state.history.some(function(event) { return event.event_type === "DUPLICATE_SENSOR_EVENT"; }));
+      assert.deepEqual((await api("/api/junctions/A/history?limit=200")).data, saved.state.history.slice(-200).reverse());
       await stop(child);
       child = null;
       // Simulate a document saved before empty status maps were preserved.
@@ -155,6 +173,9 @@ test(
       child = await start();
       state = (await api("/api/junctions/A/status")).data;
       assert.equal(state.mode, "RECOVERY");
+      assert.deepEqual((await api("/api/settings")).data.values, settings.values);
+      assert.equal((await api("/health")).data.auto_departures, false);
+      assert.equal((await api("/api/junctions/B/status")).code, 200);
       assert.equal(state.actual_signals.NORTH, "UNKNOWN");
       assert.notEqual(state.pending.command_id, oldCommand.command_id);
       assert.equal(state.vehicles.length, 2);
@@ -236,6 +257,30 @@ test(
         ).code,
         201
       );
+      for (const type of ["FORKLIFT", "EMPLOYEE_VEHICLE"]) {
+        const previous = (await api("/api/junctions/A/status")).data.sensor_sequences.SOUTH || 0;
+        const event = Object.assign({}, truck, {
+          event_id: "arrival-" + type, vehicle_id: type, vehicle_type: type,
+          direction: "SOUTH", sequence_no: previous + 1, timestamp: new Date().toISOString()
+        });
+        assert.equal((await api("/api/sensor-events", event)).code, 201);
+        saved = await collection.findOne({ _id: "A" });
+        assert.equal(saved.state.vehicles[0].vehicle_type, type);
+        assert.equal((await api("/api/junctions/A/status")).data.queues.SOUTH, 1);
+        assert.equal((await api("/api/sensor-events", Object.assign({}, event, {
+          event_id: "exit-" + type, event_type: "VEHICLE_CLEARED", sequence_no: previous + 2
+        }))).code, 201);
+        saved = await collection.findOne({ _id: "A" });
+        assert.equal(saved.state.vehicles.length, 0);
+      }
+      assert.equal((await api("/api/junctions/A/commands", { command: "MANUAL_GREEN_REQUEST", direction: "NORTH" })).code, 200);
+      saved = await collection.findOne({ _id: "A" });
+      assert.equal(saved.state.manual.phase, "NORTH_SOUTH");
+      assert.ok(saved.state.manual.expires_at > Date.now());
+      assert.equal(saved.state.mode, "MANUAL");
+      assert.equal((await api("/api/junctions/A/commands", { command: "RETURN_TO_AUTOMATIC" })).code, 200);
+      saved = await collection.findOne({ _id: "A" });
+      assert.equal(saved.state.manual, null);
       // Restart regressions use only this dedicated, disposable database.
       for (const device_type of ["SIGNAL_CONTROLLER", "SENSOR", "SIGNAL"]) {
         await api("/api/controller-events", {

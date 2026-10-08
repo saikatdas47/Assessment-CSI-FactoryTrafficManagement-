@@ -84,3 +84,23 @@ test("action feedback distinguishes safe requests from applied or ignored events
   assert.equal(actionMessage("duplicate", { message: "Duplicate ignored" }), "Duplicate ignored");
   assert.equal(actionMessage("clear", { message: "No matching vehicle; queue unchanged" }), "No matching vehicle; queue unchanged");
 });
+
+
+test("admin converts seconds to stored milliseconds and exposes every mutable policy field", async function() {
+  const { settingFields, fieldValue, storedValue } = await import("../src/adminData.js");
+  assert.equal(settingFields.length, 16);
+  for (const field of settingFields) {
+    if (field[3] === "boolean") {
+      assert.equal(storedValue(field, false), false);
+    } else if (field[3] === "seconds") {
+      assert.equal(storedValue(field, "5.001"), 5001);
+      assert.equal(fieldValue(field, 5001), 5.001);
+    } else {
+      assert.equal(storedValue(field, "3"), 3);
+    }
+  }
+});
+test("display descriptions use configured timing instead of hard-coded durations", async function() {
+  const { transitionText } = await import("../src/displayText.js");
+  assert.match(transitionText(state(), { green: 45000 }), /45 seconds/);
+});

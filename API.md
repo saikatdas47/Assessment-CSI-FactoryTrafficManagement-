@@ -16,6 +16,7 @@ Development base URL: http://localhost:4000. Render uses the same deployment URL
 | POST | /api/junctions/A/commands | Operator intent |
 | POST | /api/controller-events | ACK/NACK or device report |
 | POST | /api/junctions/A/scenarios | One-click preset |
+| GET/POST | /api/settings | Read/save complete persisted traffic policy with revision |
 | GET/POST | /api/simulator | Automatic controller confirmation setting |
 
 ## Vehicle arrival
@@ -61,7 +62,7 @@ Optional `simulated` must be boolean. Omitted equals false in the fingerprint. C
 
 Direction and vehicle must match a waiting entry. Unknown clearance leaves the queue unchanged but advances the accepted stream sequence. Duplicate exits cannot create negative counts.
 
-With `TRAFFIC_SIMULATION=true` (default), the backend generates these exits for all queued vehicles: one per confirmed GREEN direction per three seconds. With `false`, only external/manual exits remove vehicles.
+With saved `demo.automatic_departures=true` (default), the backend generates these exits for all queued vehicles: one per confirmed GREEN direction per configured interval (default three seconds). With `false`, only external/manual exits remove vehicles.
 
 ## Operator command
 
@@ -111,9 +112,9 @@ POST /api/junctions/A/scenarios:
 
 NORMAL: N3/S2/E3/W2. PRIORITY: N4 employees/E3 trucks/W2 forklifts. EMERGENCY: one emergency opposite the current phase. Presets add to current queues; they do not reset devices or manual intent.
 
-POST /api/simulator with `{ "automatic_ack": false }` disables automatic simulated controller ACK globally; true enables it. This changes controller confirmation, not the departure-mode environment setting. AUTO_ACK sets the initial value on restart.
+POST /api/simulator with `{ "automatic_ack": false }` disables automatic simulated controller ACK globally; true enables it. This compatibility endpoint persists the automatic_ack flag in the same settings document. AUTO_ACK seeds only the first setup.
 
-GET /health includes `auto_departures` reflecting TRAFFIC_SIMULATION. Change that environment setting and restart to disable demo-generated exits.
+GET /health includes `auto_departures` reflecting the saved active demo setting. Change it through Admin or /api/settings; restart is not required.
 
 ## HTTP response codes
 
@@ -129,3 +130,25 @@ GET /health includes `auto_departures` reflecting TRAFFIC_SIMULATION. Change tha
 | 503 | Storage unavailable; queued operation stopped |
 
 ACK responses distinguish accepted, ignored and rejected physical confirmation. They never claim GREEN execution merely because a command was requested.
+
+
+## Admin settings
+
+GET `/api/settings` returns `{ "values": {...}, "revision": 1, "updated_at": "..." }`.
+POST `/api/settings` replaces the complete validated policy using the currently saved revision. All stored times are milliseconds; the Admin form displays seconds.
+
+```json
+{
+  "revision": 1,
+  "values": {
+    "timing": { "green": 30000, "yellow": 5000, "clearance": 2000, "ack": 5000, "manual": 60000, "starvation": 90000, "emergency": 180000 },
+    "weights": { "EMPLOYEE_VEHICLE": 1, "FORKLIFT": 2, "MATERIAL_VEHICLE": 2, "TRUCK": 3 },
+    "scheduling": { "weight_scale": 10000, "waiting_multiplier": 1 },
+    "demo": { "automatic_ack": true, "automatic_departures": true, "departure_interval": 3000 }
+  }
+}
+```
+
+Returns saved values with a new revision. Invalid/missing/unknown fields return 400. Stale revision returns 409; reload before saving again. Integer limits in milliseconds: green 1000–300000, yellow 5000–30000, clearance 2000–30000, ACK 1000–60000; manual/starvation/emergency 1000–600000; departure interval 1000–60000. Weights 1–100 with truck >= forklift/material >= employee. Scale 1–100000 and wait multiplier 1–100. Demo toggles must be booleans. Emergency precedence and arbitrary signal maps cannot be changed.
+
+Policy is shared across junctions. Existing transition timers and accepted manual/emergency expiries do not change. Controller controls target the Admin-selected junction. POST `/api/junctions` with `{ "id": "B" }` creates an independent junction using the same engine. Duplicate ID returns 409. No junction delete or authentication is supplied for this assessment.

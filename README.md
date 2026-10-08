@@ -1,6 +1,6 @@
 # Factory Traffic Management System
 
-CSI Smart Tech Backend Developer Intern assessment. Node.js, Express, MongoDB/Mongoose, nodemon, Vite and plain JavaScript. The dashboard focuses on Junction A; the backend engine supports additional junctions.
+CSI Smart Tech Backend Developer Intern assessment. Node.js, Express, MongoDB/Mongoose, nodemon, Vite and plain JavaScript. Junction A is the default dashboard; Admin can add and open additional junctions using the same engine.
 
 ## Setup and run
 
@@ -44,13 +44,13 @@ NORTH means vehicles approaching the junction from the north; SOUTH approaches f
 
 Use a scenario card to add vehicles, or submit an individual arrival. The intersection displays controller-confirmed lights and requested states separately. In demo mode, **every queued vehicle** follows the same departure rule, including old persisted vehicles and arrivals without a simulated flag.
 
-The traffic simulator reports one departure per GREEN direction every three seconds. Each departure is a normal VEHICLE_CLEARED event. The domain engine removes the matching vehicle; it never decrements a frontend-supplied count. Vehicles on RED/YELLOW, pending commands, failed/recovering junctions and offline sensors do not depart.
+The traffic simulator reports one departure per GREEN direction every three seconds by default (editable in Admin). Each departure is a normal VEHICLE_CLEARED event. The domain engine removes the matching vehicle; it never decrements a frontend-supplied count. Vehicles on RED/YELLOW, pending commands, failed/recovering junctions and offline sensors do not depart.
 
 Departures follow arrival order within each direction. New vehicles do not use time accumulated while the road was empty. A delayed scheduler tick clears at most one vehicle per eligible direction, rather than instantly draining a queue. A new GREEN confirmation starts a fresh interval.
 
-`TRAFFIC_SIMULATION=true` is the default demonstration mode. Set it to `false` when testing real exit-sensor events: then every vehicle requires explicit clearance. The optional boolean `simulated` remains accepted as event metadata for compatibility/idempotency; it no longer selects which vehicles can depart.
+`TRAFFIC_SIMULATION=true` seeds the default demonstration mode on first setup. Saved MongoDB settings take precedence on subsequent starts. Turn automatic departures off in Admin when testing real exit-sensor events: then every vehicle requires explicit clearance. The optional boolean `simulated` remains accepted as event metadata for compatibility/idempotency; it no longer selects which vehicles can depart.
 
-Manual controls request a direction safely; Return to automatic removes manual intent. Optional controller/failure tools are collapsed. Recent activity is a small scrollable list. The frontend polls every second, uses an eight-second request timeout and disables actions when state is unavailable.
+Manual controls request a direction safely; Return to automatic removes manual intent. The small Admin button opens junction management, saved traffic settings and controller/failure controls. No login is required. Junction A remains the default dashboard; selecting another junction in Admin and returning opens that junction. Recent activity is a small scrollable list. The frontend polls every second, uses an eight-second request timeout and disables actions when state is unavailable.
 
 ## Architecture
 
@@ -66,7 +66,9 @@ Manual controls request a direction safely; Return to automatic removes manual i
 | backend/services/controllerSimulator.js | Simulated controller ACKs through the normal domain function |
 | backend/services/storageService.js | MongoDB and local-file persistence |
 | backend/models/Junction.js | Mongoose snapshot schema |
-| backend/config/trafficConfig.js | Directions, phase geometry, weights and timings |
+| backend/config/trafficConfig.js | Fixed directions/phase geometry, first-run defaults and active settings |
+| backend/services/settingsService.js | Validate, load, serialize and persist admin settings |
+| backend/models/Settings.js | MongoDB traffic settings document |
 | backend/utils/validation.js | Required fields, IDs, sequence and timestamp validation |
 | frontend/src/ | API requests, readable labels and backend-driven rendering |
 
@@ -76,13 +78,25 @@ The engine does not import Express, Mongoose, browser or MQTT code. Small functi
 
 Two phases: NORTH_SOUTH and EAST_WEST. Emergency first, then an unexpired manual intent, then normal scoring.
 
-Normal weight: TRUCK=3, FORKLIFT=2, MATERIAL_VEHICLE=2, EMPLOYEE_VEHICLE=1. Each vehicle contributes `weight * 10000 + scheduling_wait_ms`. Sum contributions for each phase. Equal scores retain the current phase. This integer formula avoids decimal-rounding switches.
+Default normal weight: TRUCK=3, FORKLIFT=2, MATERIAL_VEHICLE=2, EMPLOYEE_VEHICLE=1. Each vehicle contributes `weight * weight_scale + scheduling_wait_ms * waiting_multiplier` (defaults: 10000 and 1). Sum contributions for each phase. Equal scores retain the current phase. This integer formula avoids decimal-rounding switches.
 
-Scheduling wait starts at the later of server acceptance and that phase's latest confirmed GREEN. Arrival age displayed in the dashboard remains the original server acceptance age. A conflicting phase waiting at least 90 seconds receives the next healthy automatic scheduling opportunity. This threshold still includes subsequent safe signal switching time; emergency/manual/failure may delay normal service.
+Scheduling wait starts at the later of server acceptance and that phase's latest confirmed GREEN. Arrival age displayed in the dashboard remains the original server acceptance age. A conflicting phase waiting at least the configured threshold (default 90 seconds) receives the next healthy automatic scheduling opportunity. This threshold still includes subsequent safe signal switching time; emergency/manual/failure may delay normal service.
 
-Emergency order uses oldest server acceptance; equal-time ties retain insertion/serialized acceptance order. Emergency overrides manual intent. After emergency clearance, valid manual intent resumes, otherwise automatic scheduling resumes. An emergency older than 180 seconds enters FAILURE without silently deleting its vehicle.
+Emergency order uses oldest server acceptance; equal-time ties retain insertion/serialized acceptance order. Emergency overrides manual intent. After emergency clearance, valid manual intent resumes, otherwise automatic scheduling resumes. An emergency past its accepted timeout (default 180 seconds) enters FAILURE without silently deleting its vehicle.
 
-Manual intent lasts 60 seconds from acceptance, including failure/recovery time. Latest serialized accepted manual intent wins. Returning to automatic does not cancel an emergency or bypass clearance.
+Manual intent lasts the configured lifetime (default 60 seconds) from acceptance, including failure/recovery time. Latest serialized accepted manual intent wins. Returning to automatic does not cancel an emergency or bypass clearance.
+
+## Admin and saved settings
+
+Admin is a separate view behind a small header button, with no authentication as requested. Add junctions, choose the junction for device/recovery controls and edit the shared traffic policy. It displays the saved values and revision; it does not silently overwrite an unsaved form during dashboard polling.
+
+MongoDB `settings` has one document (`_id: traffic`) containing `values`, `revision`, and `updated_at`. First startup seeds GREEN 30s, YELLOW 5s, ALL_RED 2s, ACK 5s, manual 60s, starvation 90s, emergency 180s; employee/forklift/material/truck weights 1/2/2/3; score scale 10000, wait multiplier 1; departure interval 3s. Only GREEN/YELLOW and the relative vehicle priority come directly from the specification; other defaults are documented assumptions. AUTO_ACK and TRAFFIC_SIMULATION seed demo flags only when there is no settings document. Restart loads saved settings, rather than resetting them from environment variables. Local development stores settings separately in `.traffic-settings.json`.
+
+Save validates every field, safe integer ranges and truck >= forklift/material >= employee ordering. Yellow cannot be below 5s; all-red below 2s. Emergency precedence and conflict geometry are not editable. Score weights control phase selection, not lane overtaking. Backend binding, database URI, polling and scheduler frequency remain infrastructure settings.
+
+Settings saves are serialized and require the current revision. Two concurrent edits using the same revision produce one success and one 409; reload before retrying. Persistence succeeds before active configuration is changed. One policy applies to all junctions; queues, devices, manual requests and signal states are independent.
+
+An in-progress switching sequence captures its timing when it starts. Pending ACK deadline, confirmed timer, manual expiry and accepted emergency expiry remain fixed. New transitions and requests use saved settings. A scheduled demo departure keeps its interval; the following interval uses the new value. Turning departures off stops exits immediately; turning automatic ACK off does not extend a pending deadline. Changing settings cannot erase failures or bypass recovery.
 
 ## Safe transitions and controller confirmation
 
@@ -93,9 +107,9 @@ confirmed GREEN
 → requested next GREEN → matching ACK
 ```
 
-Normal GREEN has a 30-second minimum; emergency/manual can initiate earlier safe preemption. Every command has a unique ID and a full four-signal map. Sending a request does not prove physical execution. Timers start at accepted matching ACKs. Clients cannot force arbitrary signal maps.
+Normal GREEN has a configured minimum (default 30 seconds); emergency/manual can initiate earlier safe preemption. Every command has a unique ID and a full four-signal map. Sending a request does not prove physical execution. Timers start at accepted matching ACKs. Clients cannot force arbitrary signal maps.
 
-ACK timeout is five seconds. NACK, mismatched confirmation, timeout or device outage enters FAILURE and marks actual state UNKNOWN. The system requests ALL_RED but cannot claim physical RED without confirmation. No automatic non-red retries are performed. Duplicate/obsolete/expired ACKs are audited and ignored.
+ACK timeout defaults to five seconds and is editable in Admin. NACK, mismatched confirmation, timeout or device outage enters FAILURE and marks actual state UNKNOWN. The system requests ALL_RED but cannot claim physical RED without confirmation. No automatic non-red retries are performed. Duplicate/obsolete/expired ACKs are audited and ignored.
 
 Known OFFLINE controller/signal blocks confirmation. ONLINE reporting alone does not resume traffic. Restore each failed device ONLINE, then request recovery; fresh ALL_RED ACK and clearance are required. Fresh startup UNKNOWN may receive matching safe confirmation; known OFFLINE must not be erased by recovery.
 
@@ -136,7 +150,7 @@ See [API.md](API.md) for JSON examples, endpoints and response codes. See `backe
 - All queued vehicles depart in demo mode, regardless of arrival source/age. Three seconds per direction is a demonstration throughput assumption, not evidence from physical sensors. Disable the simulator for actual exit-sensor integration.
 - Vehicle priority selects a phase. Vehicles within the same lane depart FIFO; they cannot overtake merely because of type.
 - ACK describes an atomic complete signal map; partial acknowledgements cannot establish junction safety. Simulator ACKs are assumed honest.
-- No physical controller heartbeat/watchdog, production authentication, MQTT, distributed locking or custom per-junction geometry editor. REST adapters and polling satisfy the assessment demo.
+- No physical controller heartbeat/watchdog, production authentication, MQTT, distributed locking or custom per-junction geometry editor. Admin changes the shared policy, not the fixed two-phase conflict geometry. REST adapters and polling satisfy the assessment demo.
 - Processed IDs and history are unbounded within a snapshot. Larger systems need partitioned audit/event storage and durable command delivery.
 
 ## Tests
@@ -147,7 +161,7 @@ Run `npm test` at the project root for backend and frontend tests. Run `npm run 
 
 Push this project to GitHub. Create one Node Web Service: Root Directory empty, Build Command `npm run build`, Start Command `npm start`, Health Check `/health`. Express serves `frontend/dist` and API under one URL. `render.yaml` also supports Blueprint setup.
 
-Set STORAGE=mongodb, MONGODB_DB_NAME=factory_traffic, AUTO_ACK=true, TRAFFIC_SIMULATION=true and private MONGODB_URI in Render. Allow the service outbound addresses in Atlas Network Access. Use one instance. Sleeping/restarting services pause traffic and require recovery; MongoDB retains saved data. Manual/simulation endpoints are unauthenticated assessment controls.
+Set STORAGE=mongodb, MONGODB_DB_NAME=factory_traffic, AUTO_ACK=true, TRAFFIC_SIMULATION=true and private MONGODB_URI in Render. Allow the service outbound addresses in Atlas Network Access. Use one instance. Sleeping/restarting services pause traffic and require recovery; MongoDB retains saved data. Admin/manual/simulation endpoints are unauthenticated assessment controls. Saved settings override initial AUTO_ACK/TRAFFIC_SIMULATION values after the first run.
 
 ## AI / Tool Usage
 
@@ -156,3 +170,8 @@ OpenAI Codex assisted with implementation, tests, documentation and local verifi
 ## Further work
 
 Physical watchdog/heartbeat, exit-sensor integration, bounded history, delayed-event reconciliation, durable dispatch, authenticated operations and multi-instance ownership would be the next steps.
+
+
+## Built ZIP
+
+`assessment-source.zip` contains source, documentation, tests and the current `frontend/dist` build. The ZIP omits `.env`, dependencies, Git and local runtime snapshots. Set private backend environment values, install backend dependencies with `npm ci --prefix backend`, then run `npm start` from the project root. Express serves the included frontend build and API on one URL. To regenerate the frontend, run the documented root build command.

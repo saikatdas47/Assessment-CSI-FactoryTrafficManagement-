@@ -1,5 +1,6 @@
 import "./styles.css";
 import { api } from "./api.js";
+import { settingFields, fieldValue, storedValue } from "./adminData.js";
 import { validateStatus, validateHistory, nextSequence } from "./dashboardData.js";
 import { vehicleName, roadName, phaseName, modeName, transitionText, activityTitle, activityText, signalSummary, actionMessage } from "./displayText.js";
 const $ = function(id) { return document.getElementById(id); };
@@ -11,6 +12,8 @@ let refreshTask = null;
 let automaticAck = true;
 let automaticDepartures = true;
 let loadError = false;
+let savedSettings = null;
+let displaySettings = null;
 const busy = {};
 function element(tag, text, className) {
   const node = document.createElement(tag);
@@ -41,6 +44,7 @@ async function loadSnapshot() {
     const id = $("junction").value;
     const snapshot = validateStatus(await api("/api/junctions/" + id + "/status"));
     const history = validateHistory(await api("/api/junctions/" + id + "/history?limit=10"));
+    const settingsResponse = await api("/api/settings");
     // A response for the old selection must never replace the new junction view.
     if ($("junction").value !== id) return;
     if (snapshot.junction_id !== id) throw new Error("Backend returned a different junction");
@@ -49,10 +53,12 @@ async function loadSnapshot() {
     $("connection").textContent = "Backend connected · updated " + new Date().toLocaleTimeString();
     $("live-state").textContent = "LIVE";
     $("live-state").className = "live-badge online";
+    displaySettings = settingsResponse.values;
     automaticAck = health.auto_ack;
     automaticDepartures = health.auto_departures !== false;
-    $("departure-help").textContent = automaticDepartures ? "All waiting vehicles leave every 3 seconds on confirmed green. Old and new vehicles follow the same rule." : "Automatic departure simulation is off. Use Clear vehicle or send an exit-sensor event.";
-    $("simulator").textContent = automaticAck ? "Automatic confirmation is on." : "Manual confirmation is on. Confirm pending commands within 5 seconds.";
+    $("departure-help").textContent = automaticDepartures ? "All waiting vehicles leave every " + displaySettings.demo.departure_interval / 1000 + " seconds on confirmed green. Old and new vehicles follow the same rule." : "Automatic departure simulation is off. Use Clear vehicle or send an exit-sensor event.";
+    $("simulator").textContent = automaticAck ? "Automatic confirmation is on." : "Manual confirmation is on. Confirm pending commands within " + displaySettings.timing.ack / 1000 + " seconds.";
+    $("device-help").textContent = "For a device fault: report that device online, then recover. Manual ACK timeout for new commands is " + displaySettings.timing.ack / 1000 + " seconds; use the pending command deadline.";
     $("toggle-ack").textContent = automaticAck ? "Use manual confirmation" : "Use automatic confirmation";
     if (loadError) showMessage("error", "");
     loadError = false;
@@ -74,10 +80,13 @@ function refresh() {
   return refreshTask;
 }
 function render(history) {
+  $("junction-title").textContent = "Junction " + current.junction_id;
+  $("yellow-time").textContent = "Yellow · " + displaySettings.timing.yellow / 1000 + "s";
+  $("clearance-time").textContent = "All red · " + displaySettings.timing.clearance / 1000 + "s";
   $("mode").textContent = modeName(current.mode);
   $("mode-help").textContent = current.mode === "AUTOMATIC" ? "Backend chooses from queues, priority and waiting time" : current.mode === "EMERGENCY" ? "Emergency overrides normal and manual traffic" : current.mode === "MANUAL" ? "A time-limited operator request is active" : "Fresh safe confirmation is required";
   $("phase-help").textContent = current.mode === "FAILURE" ? "Physical signal state is unconfirmed" : current.pending ? "Requested change · not yet confirmed" : current.stage === "YELLOW" ? "Confirmed yellow clearance" : current.stage === "ALL_RED" ? "Confirmed red clearance" : "Confirmed green movement";
-  $("transition-help").textContent = transitionText(current);
+  $("transition-help").textContent = transitionText(current, displaySettings.timing);
   $("state-notice").hidden = current.mode !== "FAILURE" && current.mode !== "RECOVERY";
   $("state-notice").replaceChildren();
   if (current.mode === "FAILURE") {
@@ -89,15 +98,15 @@ function render(history) {
     if (current.controller_status === "OFFLINE") failedDevices.push("physical controller");
     const problem = failedDevices.length ? "Offline: " + failedDevices.join(", ") + "." : "Signal confirmation failed or timed out.";
     $("state-notice").append(element("strong", "Traffic is paused at Junction " + current.junction_id), element("p", problem + " Restore the failed device online, then request safe recovery. Waiting vehicles are kept."));
-    const link = element("a", "Open device health and recovery"); link.href = "#device-health"; $("state-notice").append(link);
+    const link = element("button", "Open Admin for recovery", "secondary"); link.addEventListener("click", openAdmin); $("state-notice").append(link);
   } else if (current.mode === "RECOVERY") $("state-notice").append(element("p", "Safe recovery in progress. Traffic resumes only after fresh all-red confirmation and clearance."));
   const emergencies = current.vehicles.filter(function(vehicle) { return vehicle.vehicle_type === "EMERGENCY"; });
   $("emergency-banner").classList.toggle("active", emergencies.length > 0);
   if (emergencies.length) {
     const emergencyNames = emergencies.map(function(vehicle) { return vehicle.vehicle_id + " from " + roadName(vehicle.direction); });
-    $("emergency-banner").textContent = "Emergency at Junction " + current.junction_id + ": " + emergencyNames.join(", ") + ". " + transitionText(current);
+    $("emergency-banner").textContent = "Emergency at Junction " + current.junction_id + ": " + emergencyNames.join(", ") + ". " + transitionText(current, displaySettings.timing);
   } else $("emergency-banner").textContent = "";
-  $("manual-help").textContent = current.manual ? "Manual request: " + phaseName(current.manual.phase) + ". Expires at " + new Date(current.manual.expires_at).toLocaleTimeString() + (current.mode === "EMERGENCY" ? ". Emergency currently takes priority." : ".") : "Manual control lasts 60 seconds. Emergency vehicles take priority.";
+  $("manual-help").textContent = current.manual ? "Manual request: " + phaseName(current.manual.phase) + ". Expires at " + new Date(current.manual.expires_at).toLocaleTimeString() + (current.mode === "EMERGENCY" ? ". Emergency currently takes priority." : ".") : "Manual control lasts " + displaySettings.timing.manual / 1000 + " seconds. Emergency vehicles take priority.";
   $("phase").textContent = current.mode === "FAILURE" ? "Signals unconfirmed" : phaseName(current.phase);
   $("controller").textContent = current.controller_status;
   let total = 0;
@@ -164,7 +173,7 @@ function render(history) {
     const item = element("div", "", "activity");
     const heading = document.createElement("div");
     heading.append(element("time", new Date(event.timestamp).toLocaleTimeString()), element("strong", activityTitle(event.event_type)));
-    item.append(heading, element("p", activityText(event)));
+    item.append(heading, element("p", activityText(event, displaySettings.timing)));
     $("history").append(item);
   }
 }
@@ -185,12 +194,13 @@ function bind(id, action) {
         let message = actionMessage(id, result);
         message = "Junction " + junction + ": " + message;
         showMessage("feedback", message);
+        if (!$("admin-view").hidden) $("admin-message").textContent = message;
       }
       // A poll started before this command may still contain the old state.
       const previousPoll = refreshTask;
       await refresh();
       if (previousPoll) await refresh();
-    } catch (error) { showMessage("error", error.message); await refresh(); }
+    } catch (error) { showMessage("error", error.message); if (!$("admin-view").hidden) $("admin-message").textContent = error.message; await refresh(); }
     busy[id] = false;
     if (id !== "toggle-ack" && !id.startsWith("scenario-")) $(id).textContent = buttonText;
     updateButtons();
@@ -221,6 +231,7 @@ bind("toggle-ack", async function() {
   requireCurrent();
   const result = await api("/api/simulator", { automatic_ack: !automaticAck });
   automaticAck = result.automatic_ack;
+  await loadAdminSettings();
   return result;
 });
 bind("manual", function() { return control("MANUAL_GREEN_REQUEST"); });
@@ -255,3 +266,119 @@ for (const name of ["normal", "priority", "emergency"]) {
   });
 }
 updateButtons(); refresh(); setInterval(refresh, 1000);
+
+async function loadAdminSettings() {
+  const result = await api("/api/settings");
+  savedSettings = result;
+  $("settings-saved").textContent = "Saved revision " + result.revision + " · " + new Date(result.updated_at).toLocaleString();
+  $("settings-fields").replaceChildren();
+  const groupNames = { timing: "Signal & control timing", weights: "Vehicle priority", scheduling: "Scheduling", demo: "Simulation" };
+  const groups = {};
+  for (const name of Object.keys(groupNames)) {
+    const section = element("section", "", "settings-group");
+    section.append(element("h4", groupNames[name]));
+    groups[name] = section;
+    $("settings-fields").append(section);
+  }
+  for (const field of settingFields) {
+    const label = element("label", "", "setting-row");
+    const title = element("span", field[2]);
+    label.append(title);
+    const input = document.createElement("input");
+    input.id = "setting-" + field[1];
+    if (field[3] === "boolean") {
+      input.type = "checkbox";
+      input.checked = result.values[field[0]][field[1]];
+    } else {
+      input.type = "number";
+      input.min = field[4]; input.max = field[5];
+      input.step = field[3] === "seconds" ? "0.001" : "1";
+      input.required = true;
+      input.value = fieldValue(field, result.values[field[0]][field[1]]);
+      if (field[3] === "seconds") title.append(element("small", " · sec"));
+    }
+    label.append(input);
+    groups[field[0]].append(label);
+  }
+}
+async function loadAdminJunctions() {
+  const junctions = await api("/api/junctions");
+  $("admin-junction").replaceChildren();
+  $("junction").replaceChildren();
+  for (const junction of junctions) {
+    for (const name of ["admin-junction", "junction"]) {
+      const option = element("option", "Junction " + junction.junction_id);
+      option.value = junction.junction_id;
+      $(name).append(option);
+    }
+  }
+  const selected = current ? current.junction_id : "A";
+  $("admin-junction").value = selected;
+  $("junction").value = selected;
+}
+function showDashboard() {
+  $("admin-view").hidden = true;
+  $("dashboard-view").hidden = false;
+  $("open-admin").textContent = "Admin";
+  $("page-title").textContent = "Factory traffic dashboard";
+  $("page-description").textContent = "Choose a scenario → watch the signals → vehicles leave on green.";
+  window.scrollTo(0, 0);
+  refresh();
+}
+async function openAdmin() {
+  $("open-admin").textContent = "← Dashboard";
+  $("page-title").textContent = "Factory traffic admin";
+  $("page-description").textContent = "Manage saved settings and junctions.";
+  window.scrollTo(0, 0);
+  $("dashboard-view").hidden = true;
+  $("admin-view").hidden = false;
+  $("admin-message").textContent = "Loading saved settings…";
+  try {
+    await loadAdminJunctions();
+    await loadAdminSettings();
+    $("admin-message").textContent = "";
+  } catch (error) { $("admin-message").textContent = error.message; }
+}
+$("open-admin").addEventListener("click", function() {
+  if ($("admin-view").hidden) openAdmin();
+  else showDashboard();
+});
+$("close-admin").addEventListener("click", showDashboard);
+$("admin-junction").addEventListener("change", function() {
+  $("junction").value = $("admin-junction").value;
+  $("junction").dispatchEvent(new Event("change"));
+});
+$("reload-settings").addEventListener("click", async function() {
+  try { await loadAdminSettings(); $("admin-message").textContent = "Saved settings loaded."; }
+  catch (error) { $("admin-message").textContent = error.message; }
+});
+$("add-junction").addEventListener("click", async function() {
+  $("add-junction").disabled = true;
+  try {
+    const id = $("new-junction").value.trim().toUpperCase();
+    await api("/api/junctions", { id: id });
+    await loadAdminJunctions();
+    $("new-junction").value = "";
+    $("admin-message").textContent = "Junction " + id + " added. Select it to view its traffic and device controls.";
+  } catch (error) { $("admin-message").textContent = error.message; }
+  $("add-junction").disabled = false;
+});
+$("settings-form").addEventListener("submit", async function(event) {
+  event.preventDefault();
+  $("save-settings").disabled = true;
+  try {
+    if (!savedSettings) throw new Error("Load saved settings first");
+    const values = { timing: {}, weights: {}, scheduling: {}, demo: {} };
+    for (const field of settingFields) {
+      const input = $("setting-" + field[1]);
+      let value = input.value;
+      if (field[3] === "boolean") value = input.checked;
+      values[field[0]][field[1]] = storedValue(field, value);
+    }
+    await api("/api/settings", { values: values, revision: savedSettings.revision });
+    await loadAdminSettings();
+    $("admin-message").textContent = "Settings saved. Running timers keep their original durations.";
+    await refresh();
+  } catch (error) { $("admin-message").textContent = error.message; }
+  $("save-settings").disabled = false;
+});

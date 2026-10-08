@@ -12,7 +12,7 @@ Backend-এ `npm run dev`, frontend-এ `npm run dev`। http://localhost:5173 �
 
 Demo-তে **সব waiting গাড়ির নিয়ম একই**: পুরোনো, নতুন, preset, manual form বা API—যেখান থেকেই আসুক। প্রতি GREEN direction-এ তিন সেকেন্ডে একটি গাড়ি ছাড়ে। Simulator `VEHICLE_CLEARED` event পাঠায়; engine matching গাড়ি সরায়। Frontend নিজে queue কমায় না। RED/YELLOW, pending ACK, failure/recovery বা sensor OFFLINE হলে departure বন্ধ।
 
-`TRAFFIC_SIMULATION=false` দিলে automatic departure বন্ধ। তখন আসল sensor বা Clear vehicle দিয়ে গাড়ি চলে যাওয়ার খবর দিতে হবে। `simulated` field পুরোনো event contract-এর metadata; এখন ওই flag দিয়ে গাড়ি ছাড়া/আটকানো হয় না।
+Admin-এ Automatic vehicle departures বন্ধ করলে automatic departure বন্ধ। `TRAFFIC_SIMULATION` শুধু প্রথমবারের default দেয়; পরে MongoDB-এর saved মান ব্যবহৃত হয়। তখন আসল sensor বা Clear vehicle দিয়ে গাড়ি চলে যাওয়ার খবর দিতে হবে। `simulated` field পুরোনো event contract-এর metadata; এখন ওই flag দিয়ে গাড়ি ছাড়া/আটকানো হয় না।
 
 ## ৩. কোন file আগে পড়বে?
 
@@ -51,12 +51,14 @@ Vehicle arrives চাপলে frontend POST `/api/sensor-events` করে। 
 - `status()` vehicle array গুনে প্রতিটি direction-এর queue জানায়।
 - `record()` গুরুত্বপূর্ণ ঘটনার history রাখে।
 
+সময় ও weight-এর নিচের সংখ্যাগুলো default। Admin-এর saved মান পাল্টালে নতুন সিদ্ধান্তে সেই মান ব্যবহার হবে।
+
 ## ৬. Priority হিসাব
 
 Truck weight ৩, forklift/material ২, employee ১। প্রতিটি গাড়ির score:
 
 ```text
-weight × 10000 + scheduling waiting milliseconds
+weight × saved weight_scale + scheduling waiting milliseconds × saved waiting_multiplier
 ```
 
 এক phase-এর গাড়িগুলোর score যোগ হয়। বেশি score আগে সুযোগ পায়। সমান হলে বর্তমান phase থাকে। Integer হিসাব ব্যবহার করি যাতে দশমিক rounding-এর কারণে অপ্রয়োজনীয় switch না হয়।
@@ -116,3 +118,18 @@ Root-এ `npm test` backend ও frontend পরীক্ষা করে। Back
 এটি AI-assisted assessment demo, real physical hardware নয়। একটি backend process state-এর owner। Mongoose Mixed পুরো nested schema validate করে না; controller/domain checks করে। History ও processed IDs বড় হলে আলাদা storage দরকার। বাস্তব controller watchdog, heartbeat, authentication, MQTT ও distributed locking এখানে নেই। এগুলো বোঝা এবং নিজের ভাষায় explain করা প্রয়োজন।
 
 Render-এ frontend build `frontend/dist` হয়; Express একই URL থেকে dashboard/API serve করে। MongoDB URI private environment-এ দিতে হবে, ZIP বা GitHub-এ নয়।
+
+
+## Admin settings কীভাবে কাজ করে?
+
+উপরের ছোট Admin button খুললে তিনটি বিষয় পাওয়া যায়: junction যোগ/নির্বাচন, traffic settings, controller/failure recovery। Login নেই। নতুন junction-এর queue ও light আলাদা; traffic policy সবার জন্য একই। Main dashboard প্রথমে A দেখায়। Admin-এ B বেছে Back to dashboard দিলে B দেখাবে।
+
+`Settings.js` MongoDB-এর settings document রাখে। `settingsService.js` startup-এ document পড়ে। না থাকলে একবার defaults save করে। Admin GET `/api/settings` থেকে বর্তমানে saved মান দেখায়। Save করলে POST `/api/settings` হয়; validation ও database save সফল হওয়ার পরে backend-এর active values বদলায়।
+
+`revision` হলো saved settings-এর version number। একই revision নিয়ে দুজন save করলে প্রথমটি সফল হবে; অন্যজনকে reload করতে বলবে। এতে পুরোনো form দিয়ে নতুন settings মুছে দেওয়া যায় না।
+
+Time form-এ seconds, database-এ milliseconds। Yellow ৫ সেকেন্ডের নিচে এবং all-red ২ সেকেন্ডের নিচে save করা যায় না। Emergency সবার আগে, conflicting phase একসঙ্গে GREEN নয়—এই safety rules admin বদলাতে পারে না।
+
+Transition শুরু হলে তার timing copy রাখা হয়। Settings বদলালে চলমান yellow/all-red/green deadline বা pending ACK timeout বদলায় না। Accepted manual ও emergency expiry-ও একই থাকে। পরের নতুন transition/request নতুন settings ব্যবহার করে। Demo-তে ইতিমধ্যে scheduled departure পুরোনো interval রাখে; পরেরটি নতুন interval নেয়।
+
+MongoDB-এর `settings` collection-এর `_id: traffic` document-এ `values`, `revision`, `updated_at` থাকবে। Backend restart-এ সেটাই load হয়। Environment-এর AUTO_ACK ও TRAFFIC_SIMULATION saved value overwrite করে না।

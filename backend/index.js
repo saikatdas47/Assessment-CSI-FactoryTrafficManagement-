@@ -1,10 +1,12 @@
 import "dotenv/config";
 import app from "./app.js";
+import { initializeSettings } from "./services/settingsService.js";
 import { connectStorage } from "./services/storageService.js";
 import { initialize, tick } from "./services/junctionService.js";
 
 async function start() {
   await connectStorage();
+  await initializeSettings();
   await initialize();
   const port = Number(process.env.PORT) || 4000;
   const server = app.listen(port, function (error) {

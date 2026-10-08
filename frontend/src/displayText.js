@@ -21,15 +21,16 @@ export function modeName(mode) {
   const names = { AUTOMATIC: "Automatic", MANUAL: "Manual control", EMERGENCY: "Emergency priority", FAILURE: "Failure · traffic paused", RECOVERY: "Safe recovery" };
   return names[mode] || mode;
 }
-export function transitionText(state) {
+export function transitionText(state, timing) {
+  if (!timing) timing = { green: 30000, yellow: 5000, clearance: 2000 };
   if (state.mode === "FAILURE") return "Traffic is paused. Restore any offline devices, then request safe recovery.";
   if (state.pending) return "Waiting for the controller to confirm requested signals. A request is not a confirmed physical change.";
   if (Object.values(state.actual_signals).includes("UNKNOWN")) return "Physical signals are unconfirmed. Do not assume the requested colours have been applied.";
-  if (state.stage === "YELLOW") return "The current green roads are changing to red. Yellow must remain confirmed for 5 seconds.";
-  if (state.stage === "ALL_RED") return "All roads are confirmed red. The backend waits 2 seconds before requesting the next green.";
+  if (state.stage === "YELLOW") return "The current green roads are changing to red. Yellow uses its confirmed timer; configured duration is " + timing.yellow / 1000 + " seconds.";
+  if (state.stage === "ALL_RED") return "All roads are confirmed red. The backend waits for clearance; configured duration is " + timing.clearance / 1000 + " seconds.";
   if (state.mode === "EMERGENCY") return phaseName(state.phase) + " have confirmed green for emergency priority. Report vehicle clearance after it leaves.";
   if (state.mode === "MANUAL") return phaseName(state.phase) + " have confirmed green under the active manual request.";
-  return phaseName(state.phase) + " have confirmed green. Automatic traffic normally keeps green for at least 30 seconds.";
+  return phaseName(state.phase) + " have confirmed green. Configured normal minimum is " + timing.green / 1000 + " seconds; running timers keep their original duration.";
 }
 export function activityTitle(type) {
   const names = {
@@ -54,8 +55,8 @@ export function signalSummary(signals) {
   }
   return words.join(" · ");
 }
-export function activityText(event) {
-  if (event.event_type === "CONTROLLER_TIMEOUT") return "No controller confirmation within 5 seconds.";
+export function activityText(event, timing) {
+  if (event.event_type === "CONTROLLER_TIMEOUT") return "Controller did not confirm before its command deadline.";
   if (event.event_type === "DUPLICATE_SENSOR_EVENT") return "Repeated event; queue unchanged.";
   const details = event.details;
   if (typeof details === "string") {

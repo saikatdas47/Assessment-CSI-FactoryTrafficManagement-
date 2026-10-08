@@ -44,7 +44,7 @@ export function validateSensor(event) {
     "Invalid event_type"
   );
   if (event.event_type === "VEHICLE_ARRIVED" || event.vehicle_type !== undefined) {
-    check(Object.hasOwn(weights, event.vehicle_type), "Invalid vehicle_type");
+    check(event.vehicle_type === "EMERGENCY" || Object.hasOwn(weights, event.vehicle_type), "Invalid vehicle_type");
   }
   check(
     Number.isSafeInteger(event.sequence_no) && event.sequence_no >= 0,

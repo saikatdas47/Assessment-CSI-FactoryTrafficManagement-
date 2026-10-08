@@ -8,9 +8,10 @@
 <body>
 <main>
   <header>
-    <div><p class="eyebrow">CSI SMART TECH · FACTORY OPERATIONS</p><h1>Factory traffic dashboard</h1><p>Choose a scenario → watch the signals → vehicles leave on green.</p></div>
-    <strong class="junction-title">Junction A</strong><select id="junction" hidden><option value="A">A</option></select>
+    <div><p class="eyebrow">CSI SMART TECH · FACTORY OPERATIONS</p><h1 id="page-title">Factory traffic dashboard</h1><p id="page-description">Choose a scenario → watch the signals → vehicles leave on green.</p></div>
+    <div class="header-actions"><strong class="junction-title" id="junction-title">Junction A</strong><button id="open-admin" class="secondary">Admin</button></div><select id="junction" hidden><option value="A">A</option></select>
   </header>
+  <div id="dashboard-view">
   <div class="connection-bar"><div class="connection-status"><span id="live-state" class="live-badge">CONNECTING</span><span id="connection">Connecting to backend…</span></div><span>Updates every second</span></div>
   <div class="overview-row">
     <section class="status-strip">
@@ -29,7 +30,7 @@
       <div class="section-heading"><span class="step">1</span><div><h2 id="live-intersection">Live intersection</h2><p>Large light = confirmed state. Requested state appears underneath.</p></div></div>
       <div class="intersection" id="intersection"><div class="road-center">JUNCTION</div></div>
       <div class="signal-legend"><span class="dot green"></span> Go <span class="dot yellow"></span> Changing <span class="dot red"></span> Stop <span class="dot unknown"></span> Unconfirmed</div>
-      <div class="transition"><strong>Safe switching sequence</strong><div><span>Green</span><b>→</b><span>Yellow · 5s</span><b>→</b><span>All red · 2s</span><b>→</b><span>Next green</span></div><p id="transition-help">Waiting for junction state…</p></div>
+      <div class="transition"><strong>Safe switching sequence</strong><div><span>Green</span><b>→</b><span id="yellow-time">Yellow · 5s</span><b>→</b><span id="clearance-time">All red · 2s</span><b>→</b><span>Next green</span></div><p id="transition-help">Waiting for junction state…</p></div>
       <div id="alerts" aria-live="polite"></div>
     </section>
     <section class="panel">
@@ -55,7 +56,24 @@
     <h2 id="waiting-vehicles">Waiting vehicles</h2>
     <div class="table-wrap"><table><thead><tr><th>Vehicle ID</th><th>Direction</th><th>Type</th><th>Waiting time</th><th>Action</th></tr></thead><tbody id="vehicles"></tbody></table></div>
   </section>
-  <details class="panel">
+  <section class="panel activity-panel"><h2>Recent activity</h2><div id="history"></div></section>
+  </div>
+  <section id="admin-view" hidden>
+    <div class="admin-heading admin-navigation"><div><h2>Admin settings</h2><small>Junctions, traffic policy and device controls</small></div><button id="close-admin">← Dashboard</button></div>
+    <p class="hint">Shared traffic policy · independent queues and signals per junction.</p>
+    <p id="admin-message" role="status"></p>
+    <section class="panel">
+      <h3>Junctions</h3>
+      <div class="junction-admin-row"><label>Selected junction<select id="admin-junction"></select></label><label>New junction<input id="new-junction" placeholder="B" maxlength="20"></label><button id="add-junction">Add junction</button></div>
+      <p class="hint">Select a junction, then open Dashboard. Device controls below apply to your selection.</p>
+    </section>
+    <section class="panel">
+      <div class="admin-heading"><h3>Traffic settings</h3><button id="reload-settings" class="secondary">Reload saved values</button></div>
+      <p id="settings-saved" class="hint"></p>
+      <form id="settings-form"><div id="settings-fields" class="settings-grid"></div><div class="admin-save-bar"><small>Changes apply after saving.</small><button id="save-settings" type="submit">Save changes</button></div></form>
+      <p class="hint">Times are in seconds. Yellow ≥ 5s · all-red ≥ 2s. Running timers stay unchanged.</p>
+    </section>
+  <details class="panel" open>
     <summary id="device-health">Controller &amp; failure tests</summary>
     <p class="hint">Optional tests: turn a device offline or withhold its confirmation to see traffic pause safely. Restore the device online, then recover.</p><p id="simulator"></p>
     <div class="buttons"><button id="ack">Confirm pending command</button><button id="offline" class="danger secondary">Controller offline</button><button id="recover" class="secondary">Recover controller</button></div>
@@ -64,11 +82,11 @@
       <div class="buttons"><button id="duplicate" class="secondary">Repeat last vehicle event</button><button id="toggle-ack" class="secondary">Use manual confirmation</button><button id="nack" class="danger secondary">Reject pending command</button></div>
       <div class="form-row"><label>Device<select id="device"><option value="SIGNAL_CONTROLLER">Physical controller</option><option value="SENSOR">Vehicle sensor</option><option value="SIGNAL">Traffic signal</option></select></label><label>Direction<select id="device-direction"><option>NORTH</option><option>SOUTH</option><option>EAST</option><option>WEST</option></select></label></div>
       <div class="buttons"><button id="device-offline" class="danger secondary">Device offline</button><button id="device-online" class="secondary">Device online</button></div>
-      <p class="hint">For a device fault: report that device online, then recover. With manual ACK, confirm within 5 seconds or test the timeout.</p>
+      <p class="hint" id="device-help">Restore failed devices online, then recover. Confirm pending commands before their displayed deadlines.</p>
     </details>
     <div id="pending">No pending command</div>
   </details>
-  <section class="panel activity-panel"><h2>Recent activity</h2><div id="history"></div></section>
+  </section>
 </main>
 <script type="module" src="/src/main.js"></script>
 </body>

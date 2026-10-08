@@ -63,6 +63,26 @@ test("REST validation, concurrent duplicate events, device failure and actual pr
   try {
     child = await start(directory);
     assert.equal((await api("/api/sensor-events", null)).code, 400);
+    assert.equal((await api("/api/settings", {})).code, 400);
+    const settings = (await api("/api/settings")).data;
+    assert.equal(settings.values.timing.green, 30000);
+    const invalidSettings = JSON.parse(JSON.stringify(settings.values));
+    invalidSettings.timing.yellow = 0;
+    assert.equal((await api("/api/settings", { values: invalidSettings, revision: settings.revision })).code, 400);
+    assert.equal((await api("/api/settings")).data.revision, settings.revision);
+    const changedSettings = JSON.parse(JSON.stringify(settings.values));
+    changedSettings.timing.manual = 65000;
+    changedSettings.demo.automatic_departures = false;
+    const writes = await Promise.all([
+      api("/api/settings", { values: changedSettings, revision: settings.revision }),
+      api("/api/settings", { values: changedSettings, revision: settings.revision })
+    ]);
+    assert.deepEqual(writes.map(function(result) { return result.code; }).sort(), [200, 409]);
+    assert.equal((await api("/api/settings")).data.values.timing.manual, 65000);
+    assert.equal((await api("/api/junctions", { id: "C" })).code, 201);
+    assert.equal((await api("/api/junctions", { id: "C" })).code, 409);
+    assert.equal((await api("/api/junctions/C/status")).data.queues.NORTH, 0);
+
     assert.equal((await api("/api/junctions/MISSING/status")).code, 404);
     assert.equal((await api("/api/junctions", { id: "../bad" })).code, 400);
     const event = {
@@ -93,6 +113,8 @@ test("REST validation, concurrent duplicate events, device failure and actual pr
     const old = state.pending.command_id;
     await stop(child);
     child = await start(directory);
+    assert.equal((await api("/api/settings")).data.values.timing.manual, 65000);
+    assert.equal((await api("/health")).data.auto_departures, false);
     state = (await api("/api/junctions/A/status")).data;
     assert.equal(state.queues.NORTH, 1);
     assert.equal(state.mode, "RECOVERY");

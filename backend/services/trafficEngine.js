@@ -3,6 +3,8 @@ import {
   phases,
   weights,
   timing,
+  scheduling,
+  demo,
   phaseFor,
   signalsFor
 } from "../config/trafficConfig.js";
@@ -47,6 +49,17 @@ function request(junction, stage, phase, now) {
   if (stage === "YELLOW") {
     color = "YELLOW";
   }
+  if (stage === "YELLOW" || !junction.transition_timing) {
+    junction.transition_timing = Object.assign({}, timing);
+  }
+  const activeTiming = junction.transition_timing;
+  let duration = activeTiming.clearance;
+  if (stage === "GREEN") {
+    duration = activeTiming.green;
+  }
+  if (stage === "YELLOW") {
+    duration = activeTiming.yellow;
+  }
   junction.stage = stage;
   junction.phase = phase;
   junction.desired_signals = signalsFor(phase, color);
@@ -55,8 +68,12 @@ function request(junction, stage, phase, now) {
     junction_id: junction.id,
     signals: junction.desired_signals,
     created_at: now,
-    expires_at: now + timing.ack
+    expires_at: now + timing.ack,
+    duration_ms: duration
   };
+  if (stage === "GREEN") {
+    junction.transition_timing = null;
+  }
   junction.deadline = null;
   junction.green_confirmation = null;
   junction.simulation_green_since = {};
@@ -92,6 +109,7 @@ export function recover(junction, now, startup) {
       junction.controller_status = "UNKNOWN";
     }
     junction.pending = null;
+    junction.transition_timing = null;
     junction.deadline = null;
     junction.green_confirmation = null;
     junction.simulation_green_since = {};
@@ -125,6 +143,7 @@ export function recover(junction, now, startup) {
   junction.actual_signals = signalsFor(null, "UNKNOWN");
   junction.alerts = [];
   if (!startup) {
+    junction.transition_timing = null;
     request(junction, "ALL_RED", null, now);
   }
   record(junction, "RECOVERY_STARTED", "Fresh all-red confirmation required", now);
@@ -166,8 +185,8 @@ function choose(junction, now) {
         servedAt = junction.last_served_at[phase] || 0;
       }
       const waiting = Math.max(0, now - Math.max(vehicle.received_at, servedAt));
-      // Scale the same score by 10000 so equal scores stay exactly equal.
-      score += weights[vehicle.vehicle_type] * 10000 + waiting;
+      // Integer weights and waiting time avoid decimal rounding switches.
+      score += weights[vehicle.vehicle_type] * scheduling.weight_scale + waiting * scheduling.waiting_multiplier;
       if (waiting > oldestWait && phase !== currentPhase) {
         oldestWait = waiting;
         oldestPhase = phase;
@@ -207,7 +226,7 @@ export function advance(junction, now) {
     return;
   }
   for (const vehicle of junction.vehicles) {
-    if (vehicle.vehicle_type === "EMERGENCY" && now - vehicle.received_at > timing.emergency) {
+    if (vehicle.vehicle_type === "EMERGENCY" && now > (vehicle.emergency_expires_at || vehicle.received_at + timing.emergency)) {
       fail(junction, "Emergency clearance overdue; operator intervention required", now);
       return;
     }
@@ -285,6 +304,7 @@ export function acknowledge(junction, event, now) {
   for (const direction of directions) {
     junction.signal_status[direction] = "ONLINE";
   }
+  const confirmedDuration = junction.pending.duration_ms;
   junction.pending = null;
   if (junction.stage === "GREEN") {
     junction.green_confirmation = { command_id: event.command_id, confirmed_at: now };
@@ -292,10 +312,11 @@ export function acknowledge(junction, event, now) {
     for (const direction of phases[junction.phase]) {
       junction.simulation_green_since[direction] = {
         command_id: event.command_id,
-        since: now
+        since: now,
+        interval_ms: demo.departure_interval
       };
     }
-    junction.deadline = now + timing.green;
+    junction.deadline = now + (confirmedDuration || timing.green);
     junction.last_green_phase = junction.phase;
     if (!junction.last_served_at) {
       junction.last_served_at = {};
@@ -303,10 +324,10 @@ export function acknowledge(junction, event, now) {
     junction.last_served_at[junction.phase] = now;
   }
   if (junction.stage === "YELLOW") {
-    junction.deadline = now + timing.yellow;
+    junction.deadline = now + (confirmedDuration || timing.yellow);
   }
   if (junction.stage === "ALL_RED") {
-    junction.deadline = now + timing.clearance;
+    junction.deadline = now + (confirmedDuration || timing.clearance);
   }
   record(
     junction,
@@ -401,6 +422,7 @@ export function sensorEvent(junction, event, now) {
     });
     record(junction, "VEHICLE_DETECTED", event, now);
     if (event.vehicle_type === "EMERGENCY") {
+      junction.vehicles[junction.vehicles.length - 1].emergency_expires_at = now + timing.emergency;
       record(junction, "EMERGENCY_DETECTED", event.vehicle_id, now);
     }
   } else {

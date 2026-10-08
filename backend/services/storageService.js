@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import { resolve } from "node:path";
 import { mkdir, readFile, writeFile, rename, readdir } from "node:fs/promises";
 import Junction from "../models/Junction.js";
+import Settings from "../models/Settings.js";
 let available = false;
 let directory = new URL("../data/", import.meta.url);
 if (process.env.DATA_DIRECTORY) {
@@ -41,6 +42,7 @@ export async function connectStorage() {
       serverSelectionTimeoutMS: 10000
     });
     await Junction.init();
+    await Settings.init();
   } else {
     await mkdir(directory, { recursive: true });
   }
@@ -57,7 +59,7 @@ export async function loadJunctions() {
   }
   const states = [];
   for (const name of await readdir(directory)) {
-    if (name.endsWith(".json")) {
+    if (name.endsWith(".json") && name !== ".traffic-settings.json") {
       states.push(hydrate(JSON.parse(await readFile(new URL(name, directory), "utf8"))));
     }
   }
@@ -76,6 +78,34 @@ export async function saveJunction(junction) {
     const temporary = new URL(junction.id + ".tmp", directory);
     await writeFile(temporary, JSON.stringify(junction, null, 2));
     await rename(temporary, new URL(junction.id + ".json", directory));
+  } catch (error) {
+    available = false;
+    throw error;
+  }
+}
+
+export async function loadSettings() {
+  if (process.env.STORAGE === "mongodb") {
+    return Settings.findById("traffic").lean();
+  }
+  try {
+    return JSON.parse(await readFile(new URL(".traffic-settings.json", directory), "utf8"));
+  } catch (error) {
+    if (error.code === "ENOENT") {
+      return null;
+    }
+    throw error;
+  }
+}
+export async function saveSettings(document) {
+  try {
+    if (process.env.STORAGE === "mongodb") {
+      await Settings.replaceOne({ _id: "traffic" }, document, { upsert: true });
+      return;
+    }
+    const temporary = new URL(".traffic-settings.tmp", directory);
+    await writeFile(temporary, JSON.stringify(document, null, 2));
+    await rename(temporary, new URL(".traffic-settings.json", directory));
   } catch (error) {
     available = false;
     throw error;

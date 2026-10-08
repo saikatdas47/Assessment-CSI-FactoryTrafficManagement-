@@ -2,9 +2,10 @@ import express from "express";
 import { fileURLToPath } from "node:url";
 import cors from "cors";
 import routes from "./routes/junctionRoutes.js";
-import { isAutomatic, setAutomatic } from "./services/controllerSimulator.js";
+import { isAutomatic } from "./services/controllerSimulator.js";
 import { isTrafficSimulationEnabled } from "./services/trafficSimulator.js";
 import { isStorageConnected } from "./services/storageService.js";
+import { readSettings, updateSettings } from "./services/settingsService.js";
 const app = express();
 app.use(cors({ origin: "http://localhost:5173" }));
 app.use(express.json({ limit: "32kb" }));
@@ -40,11 +41,19 @@ app.use("/api", function (req, res, next) {
 app.get("/api/simulator", function (req, res) {
   res.json({ automatic_ack: isAutomatic() });
 });
-app.post("/api/simulator", function (req, res) {
+app.get("/api/settings", function (req, res) {
+  res.json(readSettings());
+});
+app.post("/api/settings", async function (req, res) {
+  res.json(await updateSettings(req.body.values, req.body.revision));
+});
+app.post("/api/simulator", async function (req, res) {
   if (typeof req.body.automatic_ack !== "boolean") {
     return res.status(400).json({ message: "automatic_ack must be boolean" });
   }
-  setAutomatic(req.body.automatic_ack);
+  const saved = readSettings();
+  saved.values.demo.automatic_ack = req.body.automatic_ack;
+  await updateSettings(saved.values, saved.revision);
   res.json({ automatic_ack: isAutomatic() });
 });
 app.use("/api", routes);
