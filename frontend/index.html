@@ -43,7 +43,7 @@
         <label class="emergency-choice"><input type="radio" name="vehicle-type" value="EMERGENCY"><strong>Emergency vehicle</strong></label>
       </fieldset>
       <div class="buttons"><button id="arrive">Vehicle arrives</button><button id="clear" class="secondary">Vehicle clears</button></div>
-      <p class="hint">Simulated vehicles leave every 3 seconds on confirmed green. You can also clear one manually.</p>
+      <p id="departure-help" class="hint">All waiting vehicles leave every 3 seconds on confirmed green. Old and new vehicles follow the same rule.</p>
       <hr>
       <h3 id="manual-control">Manual control</h3>
       <label>Priority direction<select id="manual-direction"><option>NORTH</option><option>SOUTH</option><option>EAST</option><option>WEST</option></select></label>

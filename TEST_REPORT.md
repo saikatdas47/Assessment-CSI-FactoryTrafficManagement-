@@ -1,27 +1,52 @@
 # Test report
 
-## Current correctness verification — 2026-10-08
+## Run
 
-Eight new domain regression tests failed against the previous source and all passed after the fixes. They reproduce controller-OFFLINE recovery/ACK bypass, old ALL_RED IDs surviving restart with offline controller/sensor/signal, expired startup intent, departure intervals surviving an interruption without simulator ticks, and incomplete simulated-field validation/idempotency (including legacy fingerprints).
+```sh
+# Project root: backend and frontend
+npm test
 
-The current isolated backend suite: 1,370 passed, 0 failed, 1 opt-in Atlas test skipped (1,371 total). It includes REST validation, concurrency, actual process restart, offline-device restart invalidation, payload normalization, and forced persistence failure preventing queued memory commits. The existing calculation and independent queue/physical safety tests remain included.
+# Backend only
+cd backend
+npm test
+npm run test:atlas
 
-The opt-in MongoDB integration test: 1 passed, 0 failed. It used a dedicated factory_traffic_audit_* database, checked atomic snapshots, persisted IDs/queues, restart with offline controller/sensor/signal and fresh recovery, and removed that database afterward. Working Junction A and its database were not modified. Credentials were not included in test output.
+# Frontend tests and build
+cd frontend
+npm test
+npm run build
+```
 
-Frontend: 14 passed, 0 failed. Vite production build passed. The only UI change adds Physical controller to the existing device report selector so ONLINE can be reported explicitly. No live browser visual QA was performed in this run.
+Atlas verification requires the private URI; it overrides the database name with a temporary factory_traffic_audit_* database and removes only that database afterward. API tests use temporary local directories and separate server ports. They do not reset working Junction A.
 
-Current logs replace docs/latest-backend-tests.txt and docs/latest-atlas-tests.txt. Earlier browser/working-Atlas/source-ZIP verification statements describe historical runs and are not current evidence.
+## Coverage
 
-## Commands
+| Area | Checks |
+| --- | --- |
+| Queues | Arrival, matching/unknown/wrong-direction exit, no negative counts, duplicate and changed IDs, stream sequence ordering |
+| Scheduling | 1,152 independent queue/weight combinations, exact-score ties, server waiting age, minimum GREEN and starvation |
+| Transitions | Confirmed YELLOW 5s, confirmed ALL_RED 2s, ACK delays and deadline boundaries, no conflicting GREEN |
+| Emergency/manual | Accepted-order emergencies, safe preemption, competing requests, completion, overdue failure, manual replacement/expiry |
+| Failure/restart | Offline controller/sensor/signal, NACK/mismatch/timeout, explicit ONLINE and recovery, startup command invalidation |
+| Concurrency/storage | Serialized requests, concurrent duplicates, actual process restart, failed save prevents memory/queued commits |
+| Demo departures | Old persisted/unmarked and new vehicles follow the same rule; exit events, FIFO, three-second boundaries, empty-road timing, no instant catch-up, simulator-off behavior |
+| Simulator recovery | New GREEN identity requires a full interval even without unhealthy simulator ticks; pending/failure/recovery/offline sensor pause exits |
+| Stress | 100,000 deterministic mixed-operation steps with independent queue and physical-transition observers |
+| Frontend | Missing/malformed data, all vehicle categories, signal descriptions, sequencing, errors and request timeout |
 
-- Backend: cd backend, then npm test.
-- Frontend: cd frontend, then npm test and npm run build.
-- MongoDB: cd backend, then npm run test:atlas with private connection configuration. The test overrides the database name with a dedicated temporary name.
+Domain tests call the engine without HTTP/database/browser. GREEN by itself does not mutate queues there. The separate demo adapter generates actual clearance events when enabled; integration tests verify it also clears old snapshots through the running API.
 
-## Safety and limits
+## Latest results
 
-Normal GREEN minimum 30 seconds, confirmed YELLOW 5 seconds and confirmed ALL_RED 2 seconds remain enforced. Manual/emergency switches retain the clearance sequence. A current ACK from a known OFFLINE controller is rejected. ONLINE reporting alone does not resume traffic. Startup discards physical confirmation, command deadlines and departure timing; unresolved faults retain FAILURE even if safe RED is confirmed.
+- Backend: **1,377 passed, 0 failed**, 1 opt-in Atlas test skipped in the default run (1,378 total).
+- Separate Atlas integration: **1 passed, 0 failed** in a disposable database.
+- Frontend: **14 passed, 0 failed**; production build passed.
+- Working local Junction A: all pre-existing vehicles departed automatically and its waiting count reached zero; no manual queue reset was used.
+- The occupied-port regression verifies failed startup exits instead of running a duplicate control loop.
+- Backend files use ordinary functions and explicit conditionals/loops; syntax checks found no arrow functions, spread syntax, optional chaining or nullish coalescing.
 
-Departures require a new confirmed GREEN identity and a full three-second interval; only marked vehicles are cleared through events. Legacy processed IDs are retained conservatively: matching omitted/false duplicates are ignored; true or changed payload is rejected rather than replayed.
+Current logs are docs/latest-backend-tests.txt and docs/latest-atlas-tests.txt. This run verified local source/build/runtime, not the deployed Render service.
 
-This is a single-process REST simulation, not hardware certification. Physical maps must be applied atomically and ACKs must be honest. Mongoose Mixed does not enforce the whole state schema. Delayed sequence reconciliation, bounded persistent audit storage, distributed ownership and power-loss durability remain outside scope.
+## Limits
+
+These tests validate software with a REST controller simulator, not physical hardware. One backend instance owns state. Physical signal maps must apply atomically and confirmations must be honest. Starvation protection applies to healthy automatic mode. Mongoose Mixed does not enforce the whole state schema. Delayed-event reconciliation, bounded audit storage, authenticated operators, heartbeat/watchdog and distributed ownership remain outside the assessment scope.

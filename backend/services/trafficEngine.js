@@ -1,104 +1,170 @@
-import { directions, phases, weights, timing, phaseFor, signalsFor } from "../config/trafficConfig.js";
+import {
+  directions,
+  phases,
+  weights,
+  timing,
+  phaseFor,
+  signalsFor
+} from "../config/trafficConfig.js";
 import { randomUUID } from "node:crypto";
 
 export function record(junction, type, details, now) {
-  junction.history.push({ event_type: type, details: details, timestamp: new Date(now).toISOString() });
+  junction.history.push({
+    event_type: type,
+    details: details,
+    timestamp: new Date(now).toISOString()
+  });
 }
 export function createJunction(id, now) {
-  return { id: id, mode: "RECOVERY", stage: "ALL_RED", phase: null,
-    desired_signals: signalsFor(null, "RED"), actual_signals: signalsFor(null, "UNKNOWN"),
-    controller_status: "UNKNOWN", sensor_status: {}, signal_status: {}, vehicles: [], processed: {}, sequences: {},
-    pending: null, deadline: null, manual: null, alerts: [], history: [],
-    last_green_phase: null, last_served_at: {}, device_events: {} };
+  return {
+    id: id,
+    mode: "RECOVERY",
+    stage: "ALL_RED",
+    phase: null,
+    desired_signals: signalsFor(null, "RED"),
+    actual_signals: signalsFor(null, "UNKNOWN"),
+    controller_status: "UNKNOWN",
+    sensor_status: {},
+    signal_status: {},
+    vehicles: [],
+    processed: {},
+    sequences: {},
+    pending: null,
+    deadline: null,
+    manual: null,
+    alerts: [],
+    history: [],
+    last_green_phase: null,
+    last_served_at: {},
+    device_events: {}
+  };
 }
-function request(j, stage, phase, now) {
+function request(junction, stage, phase, now) {
   let color = "RED";
-  if (stage === "GREEN") color = "GREEN";
-  if (stage === "YELLOW") color = "YELLOW";
-  j.stage = stage;
-  j.phase = phase;
-  j.desired_signals = signalsFor(phase, color);
-  j.pending = { command_id: randomUUID(), junction_id: j.id, signals: j.desired_signals,
-    created_at: now, expires_at: now + timing.ack };
-  j.deadline = null;
-  j.green_confirmation = null;
-  j.simulation_green_since = {};
-  record(j, "SIGNAL_STATE_REQUESTED", j.pending, now);
-}
-export function fail(j, reason, now) {
-  const previousMode = j.mode;
-  j.mode = "FAILURE";
-  if (previousMode !== j.mode) record(j, "MODE_CHANGED", j.mode, now);
-  if (!j.alerts.includes(reason)) j.alerts.push(reason);
-  j.actual_signals = signalsFor(null, "UNKNOWN");
-  j.green_confirmation = null;
-  j.simulation_green_since = {};
-  if (!j.pending || Object.values(j.pending.signals).some(function(color) { return color !== "RED"; })) {
-    request(j, "ALL_RED", null, now);
+  if (stage === "GREEN") {
+    color = "GREEN";
   }
-  record(j, "DEVICE_FAILURE", reason, now);
+  if (stage === "YELLOW") {
+    color = "YELLOW";
+  }
+  junction.stage = stage;
+  junction.phase = phase;
+  junction.desired_signals = signalsFor(phase, color);
+  junction.pending = {
+    command_id: randomUUID(),
+    junction_id: junction.id,
+    signals: junction.desired_signals,
+    created_at: now,
+    expires_at: now + timing.ack
+  };
+  junction.deadline = null;
+  junction.green_confirmation = null;
+  junction.simulation_green_since = {};
+  record(junction, "SIGNAL_STATE_REQUESTED", junction.pending, now);
+}
+export function fail(junction, reason, now) {
+  const previousMode = junction.mode;
+  junction.mode = "FAILURE";
+  if (previousMode !== junction.mode) {
+    record(junction, "MODE_CHANGED", junction.mode, now);
+  }
+  if (!junction.alerts.includes(reason)) {
+    junction.alerts.push(reason);
+  }
+  junction.actual_signals = signalsFor(null, "UNKNOWN");
+  junction.green_confirmation = null;
+  junction.simulation_green_since = {};
+  if (
+    !junction.pending ||
+    Object.values(junction.pending.signals).some(function (color) {
+      return color !== "RED";
+    })
+  ) {
+    request(junction, "ALL_RED", null, now);
+  }
+  record(junction, "DEVICE_FAILURE", reason, now);
 }
 // Startup must invalidate old commands even when a saved device is offline.
-export function recover(j, now, startup = false) {
+export function recover(junction, now, startup) {
   if (startup) {
-    j.actual_signals = signalsFor(null, "UNKNOWN");
-    if (j.controller_status !== "OFFLINE") j.controller_status = "UNKNOWN";
-    j.pending = null;
-    j.deadline = null;
-    j.green_confirmation = null;
-    j.simulation_green_since = {};
-    if (j.manual && j.manual.expires_at <= now) {
-      j.manual = null;
-      record(j, "MANUAL_EXPIRED", "Manual hold ended on startup", now);
+    junction.actual_signals = signalsFor(null, "UNKNOWN");
+    if (junction.controller_status !== "OFFLINE") {
+      junction.controller_status = "UNKNOWN";
     }
-    request(j, "ALL_RED", null, now);
-    record(j, "STARTUP_RECOVERY", "Previous physical confirmation invalidated", now);
+    junction.pending = null;
+    junction.deadline = null;
+    junction.green_confirmation = null;
+    junction.simulation_green_since = {};
+    if (junction.manual && junction.manual.expires_at <= now) {
+      junction.manual = null;
+      record(junction, "MANUAL_EXPIRED", "Manual hold ended on startup", now);
+    }
+    request(junction, "ALL_RED", null, now);
+    record(junction, "STARTUP_RECOVERY", "Previous physical confirmation invalidated", now);
   }
-  if (j.controller_status === "OFFLINE") {
-    fail(j, "Controller remains offline", now);
+  if (junction.controller_status === "OFFLINE") {
+    fail(junction, "Controller remains offline", now);
     return { status: 409, message: "Report controller ONLINE before recovery" };
   }
-  for (const state of Object.values(j.sensor_status)) {
-    if (state === "OFFLINE") { fail(j, "Sensor remains offline", now); return { status: 409, message: "Report failed sensors ONLINE before recovery" }; }
+  for (const state of Object.values(junction.sensor_status)) {
+    if (state === "OFFLINE") {
+      fail(junction, "Sensor remains offline", now);
+      return { status: 409, message: "Report failed sensors ONLINE before recovery" };
+    }
   }
-  for (const state of Object.values(j.signal_status)) {
-    if (state === "OFFLINE") { fail(j, "Signal remains offline", now); return { status: 409, message: "Report failed signals ONLINE before recovery" }; }
+  for (const state of Object.values(junction.signal_status)) {
+    if (state === "OFFLINE") {
+      fail(junction, "Signal remains offline", now);
+      return { status: 409, message: "Report failed signals ONLINE before recovery" };
+    }
   }
-  if (j.mode !== "RECOVERY") record(j, "MODE_CHANGED", "RECOVERY", now);
-  j.mode = "RECOVERY";
-  j.actual_signals = signalsFor(null, "UNKNOWN");
-  j.alerts = [];
-  if (!startup) request(j, "ALL_RED", null, now);
-  record(j, "RECOVERY_STARTED", "Fresh all-red confirmation required", now);
+  if (junction.mode !== "RECOVERY") {
+    record(junction, "MODE_CHANGED", "RECOVERY", now);
+  }
+  junction.mode = "RECOVERY";
+  junction.actual_signals = signalsFor(null, "UNKNOWN");
+  junction.alerts = [];
+  if (!startup) {
+    request(junction, "ALL_RED", null, now);
+  }
+  record(junction, "RECOVERY_STARTED", "Fresh all-red confirmation required", now);
 }
 
-function choose(j, now) {
-  const emergencies = [];
-  for (const vehicle of j.vehicles) {
-    if (vehicle.vehicle_type === "EMERGENCY") emergencies.push(vehicle);
+function choose(junction, now) {
+  let firstEmergency = null;
+  for (const vehicle of junction.vehicles) {
+    if (vehicle.vehicle_type !== "EMERGENCY") {
+      continue;
+    }
+    if (!firstEmergency || vehicle.received_at < firstEmergency.received_at) {
+      firstEmergency = vehicle;
+    }
   }
-  if (emergencies.length > 0) {
-    emergencies.sort(function(a, b) { return a.received_at - b.received_at; });
-    j.mode = "EMERGENCY";
-    return phaseFor(emergencies[0].direction);
+  if (firstEmergency) {
+    junction.mode = "EMERGENCY";
+    return phaseFor(firstEmergency.direction);
   }
-  if (j.manual && j.manual.expires_at > now) {
-    j.mode = "MANUAL";
-    return j.manual.phase;
+  if (junction.manual && junction.manual.expires_at > now) {
+    junction.mode = "MANUAL";
+    return junction.manual.phase;
   }
-  j.manual = null;
-  j.mode = "AUTOMATIC";
-  const currentPhase = j.phase || j.last_green_phase;
+  junction.manual = null;
+  junction.mode = "AUTOMATIC";
+  const currentPhase = junction.phase || junction.last_green_phase;
   let winner = currentPhase;
   let best = -1;
   let oldestPhase = null;
   let oldestWait = 0;
   for (const phase of Object.keys(phases)) {
     let score = 0;
-    for (const vehicle of j.vehicles) {
-      if (phaseFor(vehicle.direction) !== phase) continue;
+    for (const vehicle of junction.vehicles) {
+      if (phaseFor(vehicle.direction) !== phase) {
+        continue;
+      }
       let servedAt = 0;
-      if (j.last_served_at) servedAt = j.last_served_at[phase] || 0;
+      if (junction.last_served_at) {
+        servedAt = junction.last_served_at[phase] || 0;
+      }
       const waiting = Math.max(0, now - Math.max(vehicle.received_at, servedAt));
       // Scale the same score by 10000 so equal scores stay exactly equal.
       score += weights[vehicle.vehicle_type] * 10000 + waiting;
@@ -107,217 +173,378 @@ function choose(j, now) {
         oldestPhase = phase;
       }
     }
-    if (score > best) { best = score; winner = phase; }
-    if (score === best && phase === currentPhase) winner = phase;
+    if (score > best) {
+      best = score;
+      winner = phase;
+    }
+    if (score === best && phase === currentPhase) {
+      winner = phase;
+    }
   }
-  if (oldestWait >= timing.starvation) return oldestPhase;
+  if (oldestWait >= timing.starvation) {
+    return oldestPhase;
+  }
   return winner;
 }
-export function advance(j, now) {
-  if (j.manual && j.manual.expires_at <= now) {
-    j.manual = null;
-    record(j, "MANUAL_EXPIRED", "Manual hold ended", now);
+export function advance(junction, now) {
+  if (junction.manual && junction.manual.expires_at <= now) {
+    junction.manual = null;
+    record(junction, "MANUAL_EXPIRED", "Manual hold ended", now);
   }
-  if (j.pending && now >= j.pending.expires_at) {
-    record(j, "CONTROLLER_TIMEOUT", j.pending.command_id, now);
-    if (j.mode === "FAILURE") {
-      j.pending = null;
-      if (!j.alerts.includes("All-red unconfirmed; physical state unknown")) j.alerts.push("All-red unconfirmed; physical state unknown");
+  if (junction.pending && now >= junction.pending.expires_at) {
+    record(junction, "CONTROLLER_TIMEOUT", junction.pending.command_id, now);
+    if (junction.mode === "FAILURE") {
+      junction.pending = null;
+      if (!junction.alerts.includes("All-red unconfirmed; physical state unknown")) {
+        junction.alerts.push("All-red unconfirmed; physical state unknown");
+      }
       return;
     }
-    fail(j, "Controller acknowledgement timeout", now);
+    fail(junction, "Controller acknowledgement timeout", now);
     return;
   }
-  if (j.mode === "FAILURE" || j.mode === "RECOVERY") return;
-  for (const v of j.vehicles) {
-    if (v.vehicle_type === "EMERGENCY" && now - v.received_at > timing.emergency) {
-      fail(j, "Emergency clearance overdue; operator intervention required", now);
+  if (junction.mode === "FAILURE" || junction.mode === "RECOVERY") {
+    return;
+  }
+  for (const vehicle of junction.vehicles) {
+    if (vehicle.vehicle_type === "EMERGENCY" && now - vehicle.received_at > timing.emergency) {
+      fail(junction, "Emergency clearance overdue; operator intervention required", now);
       return;
     }
   }
-  const previousMode = j.mode;
-  const next = choose(j, now);
-  if (previousMode !== j.mode) record(j, "MODE_CHANGED", j.mode, now);
-  if (j.pending) return;
-  if (j.stage === "YELLOW") {
-    if (now >= j.deadline) request(j, "ALL_RED", null, now);
+  const previousMode = junction.mode;
+  const next = choose(junction, now);
+  if (previousMode !== junction.mode) {
+    record(junction, "MODE_CHANGED", junction.mode, now);
+  }
+  if (junction.pending) {
     return;
   }
-  if (j.stage === "ALL_RED") {
-    if (now >= j.deadline) request(j, "GREEN", next, now);
+  if (junction.stage === "YELLOW") {
+    if (now >= junction.deadline) {
+      request(junction, "ALL_RED", null, now);
+    }
     return;
   }
-  if (next !== j.phase && (j.mode !== "AUTOMATIC" || now >= j.deadline)) {
-    record(j, "SIGNAL_TRANSITION_STARTED", { from: j.phase, to: next }, now);
-    request(j, "YELLOW", j.phase, now);
+  if (junction.stage === "ALL_RED") {
+    if (now >= junction.deadline) {
+      request(junction, "GREEN", next, now);
+    }
+    return;
+  }
+  if (next !== junction.phase && (junction.mode !== "AUTOMATIC" || now >= junction.deadline)) {
+    record(junction, "SIGNAL_TRANSITION_STARTED", { from: junction.phase, to: next }, now);
+    request(junction, "YELLOW", junction.phase, now);
   }
 }
-export function acknowledge(j, event, now) {
-  record(j, "CONTROLLER_ACKNOWLEDGEMENT", event, now);
-  if (!j.pending || event.command_id !== j.pending.command_id) {
-    record(j, "ACK_IGNORED", "Duplicate or obsolete command", now);
+export function acknowledge(junction, event, now) {
+  record(junction, "CONTROLLER_ACKNOWLEDGEMENT", event, now);
+  if (!junction.pending || event.command_id !== junction.pending.command_id) {
+    record(junction, "ACK_IGNORED", "Duplicate or obsolete command", now);
     return { status: 200, message: "Duplicate or obsolete acknowledgement ignored" };
   }
-  if (j.controller_status === "OFFLINE") {
-    record(j, "ACK_REJECTED", "Controller offline; physical confirmation unavailable", now);
+  if (junction.controller_status === "OFFLINE") {
+    record(
+      junction,
+      "ACK_REJECTED",
+      "Controller offline; physical confirmation unavailable",
+      now
+    );
     return { status: 409, message: "Controller offline; report ONLINE before confirmation" };
   }
-  if (now >= j.pending.expires_at) {
-    advance(j, now);
-    record(j, "ACK_IGNORED", "Expired command", now);
+  if (now >= junction.pending.expires_at) {
+    advance(junction, now);
+    record(junction, "ACK_IGNORED", "Expired command", now);
     return { status: 200, message: "Expired acknowledgement ignored" };
   }
-  if (event.status !== "ACK" || !signalsMatch(event.actual_signals, j.desired_signals)) {
-    fail(j, "Controller rejected command or confirmed mismatched signals", now);
-    return { status: 409, message: "Controller rejection or mismatched state; junction entered FAILURE" };
+  if (
+    event.status !== "ACK" ||
+    !signalsMatch(event.actual_signals, junction.desired_signals)
+  ) {
+    fail(junction, "Controller rejected command or confirmed mismatched signals", now);
+    return {
+      status: 409,
+      message: "Controller rejection or mismatched state; junction entered FAILURE"
+    };
   }
-  if (Object.values(j.signal_status).includes("OFFLINE")) {
-    record(j, "ACK_IGNORED", "A failed signal cannot provide whole-junction confirmation", now);
+  if (Object.values(junction.signal_status).includes("OFFLINE")) {
+    record(
+      junction,
+      "ACK_IGNORED",
+      "A failed signal cannot provide whole-junction confirmation",
+      now
+    );
     return { status: 409, message: "Signal offline; whole-junction confirmation unavailable" };
   }
-  const previousSignals = j.actual_signals;
-  j.actual_signals = {};
-  for (const direction of directions) j.actual_signals[direction] = event.actual_signals[direction];
-  j.controller_status = "ONLINE";
-  for (const direction of directions) j.signal_status[direction] = "ONLINE";
-  j.pending = null;
-  if (j.stage === "GREEN") {
-    j.green_confirmation = { command_id: event.command_id, confirmed_at: now };
-    j.simulation_green_since = {};
-    for (const direction of phases[j.phase]) {
-      j.simulation_green_since[direction] = { command_id: event.command_id, since: now };
-    }
-    j.deadline = now + timing.green;
-    j.last_green_phase = j.phase;
-    if (!j.last_served_at) j.last_served_at = {};
-    j.last_served_at[j.phase] = now;
+  const previousSignals = junction.actual_signals;
+  junction.actual_signals = {};
+  for (const direction of directions) {
+    junction.actual_signals[direction] = event.actual_signals[direction];
   }
-  if (j.stage === "YELLOW") j.deadline = now + timing.yellow;
-  if (j.stage === "ALL_RED") j.deadline = now + timing.clearance;
-  record(j, "SIGNAL_STATE_CONFIRMED", { command_id: event.command_id, previous_signals: previousSignals, signals: j.actual_signals }, now);
-  if (j.mode === "RECOVERY") {
-    j.mode = "AUTOMATIC";
-    record(j, "MODE_CHANGED", j.mode, now);
+  junction.controller_status = "ONLINE";
+  for (const direction of directions) {
+    junction.signal_status[direction] = "ONLINE";
+  }
+  junction.pending = null;
+  if (junction.stage === "GREEN") {
+    junction.green_confirmation = { command_id: event.command_id, confirmed_at: now };
+    junction.simulation_green_since = {};
+    for (const direction of phases[junction.phase]) {
+      junction.simulation_green_since[direction] = {
+        command_id: event.command_id,
+        since: now
+      };
+    }
+    junction.deadline = now + timing.green;
+    junction.last_green_phase = junction.phase;
+    if (!junction.last_served_at) {
+      junction.last_served_at = {};
+    }
+    junction.last_served_at[junction.phase] = now;
+  }
+  if (junction.stage === "YELLOW") {
+    junction.deadline = now + timing.yellow;
+  }
+  if (junction.stage === "ALL_RED") {
+    junction.deadline = now + timing.clearance;
+  }
+  record(
+    junction,
+    "SIGNAL_STATE_CONFIRMED",
+    {
+      command_id: event.command_id,
+      previous_signals: previousSignals,
+      signals: junction.actual_signals
+    },
+    now
+  );
+  if (junction.mode === "RECOVERY") {
+    junction.mode = "AUTOMATIC";
+    record(junction, "MODE_CHANGED", junction.mode, now);
   }
   return { status: 200, message: "Controller state confirmed", command_id: event.command_id };
 }
 export function signalsMatch(actual, expected) {
-  if (!actual || typeof actual !== "object") return false;
+  if (!actual || typeof actual !== "object") {
+    return false;
+  }
   for (const direction of directions) {
-    if (actual[direction] !== expected[direction]) return false;
+    if (actual[direction] !== expected[direction]) {
+      return false;
+    }
   }
   return true;
 }
-export function sensorEvent(j, e, now) {
-  if (e.simulated !== undefined && typeof e.simulated !== "boolean") {
-    const error = new Error("simulated must be boolean"); error.status = 400; throw error;
+export function sensorEvent(junction, event, now) {
+  if (event.simulated !== undefined && typeof event.simulated !== "boolean") {
+    const error = new Error("simulated must be boolean");
+    error.status = 400;
+    throw error;
   }
-  const payload = [e.direction, e.event_type, e.vehicle_id, e.vehicle_type, e.sequence_no, e.timestamp];
+  const payload = [
+    event.direction,
+    event.event_type,
+    event.vehicle_id,
+    event.vehicle_type,
+    event.sequence_no,
+    event.timestamp
+  ];
   const legacyFingerprint = JSON.stringify(payload);
-  payload.push(e.simulated === true);
+  payload.push(event.simulated === true);
   const fingerprint = JSON.stringify(payload);
-  if (Object.hasOwn(j.processed, e.event_id)) {
-    const savedFingerprint = j.processed[e.event_id];
+  if (Object.hasOwn(junction.processed, event.event_id)) {
+    const savedFingerprint = junction.processed[event.event_id];
     // Legacy records did not store simulated. Never replay or promote those IDs.
-    const legacyDuplicate = savedFingerprint === legacyFingerprint && e.simulated !== true;
+    const legacyDuplicate = savedFingerprint === legacyFingerprint && event.simulated !== true;
     if (savedFingerprint !== fingerprint && !legacyDuplicate) {
-      record(j, "SENSOR_REJECTED", "Event ID reused with different payload", now);
+      record(junction, "SENSOR_REJECTED", "Event ID reused with different payload", now);
       return { status: 409, message: "Event ID already has a different payload" };
     }
-    record(j, "DUPLICATE_SENSOR_EVENT", e.event_id, now);
+    record(junction, "DUPLICATE_SENSOR_EVENT", event.event_id, now);
     return { status: 200, message: "Duplicate ignored" };
   }
-  if (j.sensor_status[e.direction] === "OFFLINE") {
-    record(j, "SENSOR_REJECTED", "Sensor is offline: " + e.direction, now);
-    return { status: 409, message: "Sensor is offline; report ONLINE before new vehicle events" };
+  if (junction.sensor_status[event.direction] === "OFFLINE") {
+    record(junction, "SENSOR_REJECTED", "Sensor is offline: " + event.direction, now);
+    return {
+      status: 409,
+      message: "Sensor is offline; report ONLINE before new vehicle events"
+    };
   }
-  Object.defineProperty(j.processed, e.event_id, { value: fingerprint, enumerable: true, writable: true, configurable: true });
-  const last = j.sequences[e.direction];
-  if (last !== undefined && e.sequence_no <= last) {
-    record(j, "SENSOR_REJECTED", "Out-of-order sequence: " + e.event_id, now);
+  // Safely store even an event ID named __proto__; normal assignment would be unsafe.
+  Object.defineProperty(junction.processed, event.event_id, {
+    value: fingerprint,
+    enumerable: true,
+    writable: true,
+    configurable: true
+  });
+  const last = junction.sequences[event.direction];
+  if (last !== undefined && event.sequence_no <= last) {
+    record(junction, "SENSOR_REJECTED", "Out-of-order sequence: " + event.event_id, now);
     return { status: 200, message: "Old sequence ignored" };
   }
-  j.sequences[e.direction] = e.sequence_no;
-  j.sensor_status[e.direction] = "ONLINE";
-  const index = j.vehicles.findIndex(function(v) { return v.vehicle_id === e.vehicle_id; });
-  if (e.event_type === "VEHICLE_ARRIVED") {
+  junction.sequences[event.direction] = event.sequence_no;
+  junction.sensor_status[event.direction] = "ONLINE";
+  const index = junction.vehicles.findIndex(function (vehicle) {
+    return vehicle.vehicle_id === event.vehicle_id;
+  });
+  if (event.event_type === "VEHICLE_ARRIVED") {
     if (index >= 0) {
-      record(j, "SENSOR_REJECTED", "Vehicle already waiting", now);
+      record(junction, "SENSOR_REJECTED", "Vehicle already waiting", now);
       return { status: 409, message: "Vehicle already waiting" };
     }
-    j.vehicles.push({ vehicle_id: e.vehicle_id, direction: e.direction, vehicle_type: e.vehicle_type,
-      received_at: now, sensor_timestamp: e.timestamp });
-    record(j, "VEHICLE_DETECTED", e, now);
-    if (e.vehicle_type === "EMERGENCY") record(j, "EMERGENCY_DETECTED", e.vehicle_id, now);
+    junction.vehicles.push({
+      vehicle_id: event.vehicle_id,
+      direction: event.direction,
+      vehicle_type: event.vehicle_type,
+      received_at: now,
+      sensor_timestamp: event.timestamp
+    });
+    record(junction, "VEHICLE_DETECTED", event, now);
+    if (event.vehicle_type === "EMERGENCY") {
+      record(junction, "EMERGENCY_DETECTED", event.vehicle_id, now);
+    }
   } else {
-    if (index < 0 || j.vehicles[index].direction !== e.direction) {
-      record(j, "SENSOR_REJECTED", "No matching waiting vehicle", now);
+    if (index < 0 || junction.vehicles[index].direction !== event.direction) {
+      record(junction, "SENSOR_REJECTED", "No matching waiting vehicle", now);
       return { status: 200, message: "No matching vehicle; queue unchanged" };
     }
-    const vehicle = j.vehicles.splice(index, 1)[0];
-    record(j, "VEHICLE_CLEARED", e, now);
-    if (vehicle.vehicle_type === "EMERGENCY") record(j, "EMERGENCY_CLEARED", e.vehicle_id, now);
+    const vehicle = junction.vehicles[index];
+    junction.vehicles.splice(index, 1);
+    record(junction, "VEHICLE_CLEARED", event, now);
+    if (vehicle.vehicle_type === "EMERGENCY") {
+      record(junction, "EMERGENCY_CLEARED", event.vehicle_id, now);
+    }
   }
-  advance(j, now);
+  advance(junction, now);
   return { status: 201, message: "Event processed" };
 }
-export function command(j, body, now) {
-  if (!["MANUAL_GREEN_REQUEST", "RETURN_TO_AUTOMATIC", "RECOVER_CONTROLLER"].includes(body.command)) {
-    const error = new Error("Invalid command"); error.status = 400; throw error;
+export function command(junction, body, now) {
+  if (
+    !["MANUAL_GREEN_REQUEST", "RETURN_TO_AUTOMATIC", "RECOVER_CONTROLLER"].includes(
+      body.command
+    )
+  ) {
+    const error = new Error("Invalid command");
+    error.status = 400;
+    throw error;
   }
   if (body.command === "MANUAL_GREEN_REQUEST") {
-    if (!directions.includes(body.direction)) { const error = new Error("Invalid direction"); error.status = 400; throw error; }
-    if (j.mode === "FAILURE" || j.mode === "RECOVERY") {
-      const error = new Error("Recover and confirm the controller before requesting manual green"); error.status = 409; throw error;
+    if (!directions.includes(body.direction)) {
+      const error = new Error("Invalid direction");
+      error.status = 400;
+      throw error;
+    }
+    if (junction.mode === "FAILURE" || junction.mode === "RECOVERY") {
+      const error = new Error(
+        "Recover and confirm the controller before requesting manual green"
+      );
+      error.status = 409;
+      throw error;
     }
   }
-  if (body.command === "RECOVER_CONTROLLER") return recover(j, now);
-  if (body.command === "RETURN_TO_AUTOMATIC") {
-    j.manual = null;
-    record(j, "RETURN_TO_AUTOMATIC", body, now);
-  } else {
-    j.manual = { phase: phaseFor(body.direction), expires_at: now + timing.manual };
-    record(j, "MANUAL_OVERRIDE", j.manual, now);
+  if (body.command === "RECOVER_CONTROLLER") {
+    return recover(junction, now);
   }
-  advance(j, now);
+  if (body.command === "RETURN_TO_AUTOMATIC") {
+    junction.manual = null;
+    record(junction, "RETURN_TO_AUTOMATIC", body, now);
+  } else {
+    junction.manual = { phase: phaseFor(body.direction), expires_at: now + timing.manual };
+    record(junction, "MANUAL_OVERRIDE", junction.manual, now);
+  }
+  advance(junction, now);
 }
-export function status(j) {
+export function status(junction) {
   const alerts = [];
-  for (const alert of j.alerts) if (!alerts.includes(alert)) alerts.push(alert);
+  for (const alert of junction.alerts) {
+    if (!alerts.includes(alert)) {
+      alerts.push(alert);
+    }
+  }
   const queues = {};
-  for (const d of directions) queues[d] = 0;
-  for (const v of j.vehicles) queues[v.direction] += 1;
-  return { junction_id: j.id, mode: j.mode, phase: j.phase, stage: j.stage,
-    controller_status: j.controller_status, desired_signals: j.desired_signals, actual_signals: j.actual_signals,
-    queues: queues, vehicles: j.vehicles, pending: j.pending, alerts: alerts,
-    manual: j.manual, sensor_status: j.sensor_status, signal_status: j.signal_status, deadline: j.deadline,
-    sensor_sequences: j.sequences };
+  for (const d of directions) {
+    queues[d] = 0;
+  }
+  for (const vehicle of junction.vehicles) {
+    queues[vehicle.direction] += 1;
+  }
+  return {
+    junction_id: junction.id,
+    mode: junction.mode,
+    phase: junction.phase,
+    stage: junction.stage,
+    controller_status: junction.controller_status,
+    desired_signals: junction.desired_signals,
+    actual_signals: junction.actual_signals,
+    queues: queues,
+    vehicles: junction.vehicles,
+    pending: junction.pending,
+    alerts: alerts,
+    manual: junction.manual,
+    sensor_status: junction.sensor_status,
+    signal_status: junction.signal_status,
+    deadline: junction.deadline,
+    sensor_sequences: junction.sequences
+  };
 }
 
-export function deviceEvent(j, event, now) {
-  if (!j.device_events) j.device_events = {};
-  const fingerprint = JSON.stringify([event.device_type, event.direction, event.status, event.timestamp]);
-  if (event.event_id && Object.hasOwn(j.device_events, event.event_id)) {
-    if (j.device_events[event.event_id] !== fingerprint) {
-      record(j, "DEVICE_STATUS_REJECTED", "Device event ID reused with different payload", now);
+export function deviceEvent(junction, event, now) {
+  if (!junction.device_events) {
+    junction.device_events = {};
+  }
+  const fingerprint = JSON.stringify([
+    event.device_type,
+    event.direction,
+    event.status,
+    event.timestamp
+  ]);
+  if (event.event_id && Object.hasOwn(junction.device_events, event.event_id)) {
+    if (junction.device_events[event.event_id] !== fingerprint) {
+      record(
+        junction,
+        "DEVICE_STATUS_REJECTED",
+        "Device event ID reused with different payload",
+        now
+      );
       return { status: 409, message: "Device event ID has a different payload" };
     }
-    record(j, "DEVICE_STATUS_IGNORED", "Duplicate device event", now);
+    record(junction, "DEVICE_STATUS_IGNORED", "Duplicate device event", now);
     return { status: 200, message: "Duplicate device report ignored" };
   }
-  if (event.event_id) Object.defineProperty(j.device_events, event.event_id, { value: fingerprint, enumerable: true, writable: true, configurable: true });
+  if (event.event_id) {
+    Object.defineProperty(junction.device_events, event.event_id, {
+      value: fingerprint,
+      enumerable: true,
+      writable: true,
+      configurable: true
+    });
+  }
   let previous;
-  if (event.device_type === "SIGNAL_CONTROLLER") previous = j.controller_status;
-  if (event.device_type === "SENSOR") previous = j.sensor_status[event.direction];
-  if (event.device_type === "SIGNAL") previous = j.signal_status[event.direction];
+  if (event.device_type === "SIGNAL_CONTROLLER") {
+    previous = junction.controller_status;
+  }
+  if (event.device_type === "SENSOR") {
+    previous = junction.sensor_status[event.direction];
+  }
+  if (event.device_type === "SIGNAL") {
+    previous = junction.signal_status[event.direction];
+  }
   if (previous === event.status) {
-    record(j, "DEVICE_STATUS_IGNORED", "Device status already " + event.status, now);
+    record(junction, "DEVICE_STATUS_IGNORED", "Device status already " + event.status, now);
     return { status: 200, message: "Unchanged device status ignored" };
   }
-  if (event.device_type === "SIGNAL_CONTROLLER") j.controller_status = event.status;
-  if (event.device_type === "SENSOR") j.sensor_status[event.direction] = event.status;
-  if (event.device_type === "SIGNAL") j.signal_status[event.direction] = event.status;
-  record(j, "DEVICE_STATUS", event, now);
-  if (event.status === "OFFLINE") fail(j, event.device_type + " offline " + (event.direction || ""), now);
+  if (event.device_type === "SIGNAL_CONTROLLER") {
+    junction.controller_status = event.status;
+  }
+  if (event.device_type === "SENSOR") {
+    junction.sensor_status[event.direction] = event.status;
+  }
+  if (event.device_type === "SIGNAL") {
+    junction.signal_status[event.direction] = event.status;
+  }
+  record(junction, "DEVICE_STATUS", event, now);
+  if (event.status === "OFFLINE") {
+    fail(junction, event.device_type + " offline " + (event.direction || ""), now);
+  }
   return { status: 200, message: "Device status recorded; recovery is explicit" };
 }

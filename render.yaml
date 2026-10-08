@@ -14,5 +14,7 @@ services:
         value: factory_traffic
       - key: AUTO_ACK
         value: "true"
+      - key: TRAFFIC_SIMULATION
+        value: "true"
       - key: MONGODB_URI
         sync: false

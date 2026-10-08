@@ -9,6 +9,7 @@ let current = null;
 let lastEvent = null;
 let refreshTask = null;
 let automaticAck = true;
+let automaticDepartures = true;
 let loadError = false;
 const busy = {};
 function element(tag, text, className) {
@@ -49,6 +50,8 @@ async function loadSnapshot() {
     $("live-state").textContent = "LIVE";
     $("live-state").className = "live-badge online";
     automaticAck = health.auto_ack;
+    automaticDepartures = health.auto_departures !== false;
+    $("departure-help").textContent = automaticDepartures ? "All waiting vehicles leave every 3 seconds on confirmed green. Old and new vehicles follow the same rule." : "Automatic departure simulation is off. Use Clear vehicle or send an exit-sensor event.";
     $("simulator").textContent = automaticAck ? "Automatic confirmation is on." : "Manual confirmation is on. Confirm pending commands within 5 seconds.";
     $("toggle-ack").textContent = automaticAck ? "Use manual confirmation" : "Use automatic confirmation";
     if (loadError) showMessage("error", "");

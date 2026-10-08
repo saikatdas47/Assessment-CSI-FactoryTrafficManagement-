@@ -2,55 +2,148 @@ import { randomUUID } from "node:crypto";
 import { sensorEvent, record } from "./trafficEngine.js";
 import { directions } from "../config/trafficConfig.js";
 
-export function markSimulated(j, vehicleId) {
-  if (!j.simulated_vehicles) j.simulated_vehicles = [];
-  if (!j.simulated_vehicles.includes(vehicleId)) j.simulated_vehicles.push(vehicleId);
+export function isTrafficSimulationEnabled() {
+  return process.env.TRAFFIC_SIMULATION !== "false";
 }
-function eventFor(j, vehicleId, direction, type, now, eventType) {
-  return { event_id: randomUUID(), junction_id: j.id, vehicle_id: vehicleId,
-    direction: direction, vehicle_type: type, event_type: eventType,
-    sequence_no: (j.sequences[direction] || 0) + 1, timestamp: new Date(now).toISOString() };
-}
-export function startScenario(j, name, now) {
-  if (!["NORMAL", "PRIORITY", "EMERGENCY"].includes(name)) return { status: 400, message: "Invalid scenario" };
-  if (j.mode === "FAILURE" || j.mode === "RECOVERY") return { status: 409, message: "Recover the junction before starting a scenario" };
-  for (const direction of directions) {
-    if (j.sensor_status[direction] === "OFFLINE") return { status: 409, message: "Restore offline sensors first" };
+
+function eventFor(junction, vehicle, now, eventType) {
+  let sequence = junction.sequences[vehicle.direction];
+  if (sequence === undefined) {
+    sequence = 0;
   }
-  let groups = [["NORTH", "EMPLOYEE_VEHICLE", 3], ["SOUTH", "MATERIAL_VEHICLE", 2], ["EAST", "EMPLOYEE_VEHICLE", 3], ["WEST", "FORKLIFT", 2]];
-  if (name === "PRIORITY") groups = [["NORTH", "EMPLOYEE_VEHICLE", 4], ["EAST", "TRUCK", 3], ["WEST", "FORKLIFT", 2]];
+
+  return {
+    event_id: randomUUID(),
+    junction_id: junction.id,
+    vehicle_id: vehicle.vehicle_id,
+    direction: vehicle.direction,
+    vehicle_type: vehicle.vehicle_type,
+    event_type: eventType,
+    sequence_no: sequence + 1,
+    timestamp: new Date(now).toISOString()
+  };
+}
+
+export function startScenario(junction, name, now) {
+  if (!["NORMAL", "PRIORITY", "EMERGENCY"].includes(name)) {
+    return { status: 400, message: "Invalid scenario" };
+  }
+  if (junction.mode === "FAILURE" || junction.mode === "RECOVERY") {
+    return { status: 409, message: "Recover the junction before starting a scenario" };
+  }
+  for (const direction of directions) {
+    if (junction.sensor_status[direction] === "OFFLINE") {
+      return { status: 409, message: "Restore offline sensors first" };
+    }
+  }
+
+  let groups = [
+    ["NORTH", "EMPLOYEE_VEHICLE", 3],
+    ["SOUTH", "MATERIAL_VEHICLE", 2],
+    ["EAST", "EMPLOYEE_VEHICLE", 3],
+    ["WEST", "FORKLIFT", 2]
+  ];
+  if (name === "PRIORITY") {
+    groups = [
+      ["NORTH", "EMPLOYEE_VEHICLE", 4],
+      ["EAST", "TRUCK", 3],
+      ["WEST", "FORKLIFT", 2]
+    ];
+  }
   if (name === "EMERGENCY") {
-    const opposite = j.phase === "EAST_WEST" ? "NORTH" : "EAST";
+    let opposite = "EAST";
+    if (junction.phase === "EAST_WEST") {
+      opposite = "NORTH";
+    }
     groups = [[opposite, "EMERGENCY", 1]];
   }
+
   let count = 0;
   for (const group of groups) {
-    for (let i = 0; i < group[2]; i++) {
-      const id = "DEMO-" + randomUUID().slice(0, 8);
-      const result = sensorEvent(j, { ...eventFor(j, id, group[0], group[1], now, "VEHICLE_ARRIVED"), simulated: true }, now);
-      if (result.status !== 201) throw new Error(result.message);
-      markSimulated(j, id); count++;
+    const direction = group[0];
+    const vehicleType = group[1];
+    const amount = group[2];
+    for (let i = 0; i < amount; i++) {
+      const vehicle = {
+        vehicle_id: "DEMO-" + randomUUID().slice(0, 8),
+        direction: direction,
+        vehicle_type: vehicleType
+      };
+      const event = eventFor(junction, vehicle, now, "VEHICLE_ARRIVED");
+      event.simulated = true;
+      const result = sensorEvent(junction, event, now);
+      if (result.status !== 201) {
+        throw new Error(result.message);
+      }
+      count++;
     }
   }
-  record(j, "SIMULATION_STARTED", { scenario: name, vehicles: count }, now);
-  return { status: 201, message: count + " simulated vehicles added. They leave automatically on confirmed green." };
+
+  record(junction, "SIMULATION_STARTED", { scenario: name, vehicles: count }, now);
+  let message = count + " vehicles added. They leave automatically on confirmed green.";
+  if (!isTrafficSimulationEnabled()) {
+    message = count + " vehicles added. Automatic departures are disabled.";
+  }
+  return { status: 201, message: message };
 }
-export function simulateDepartures(j, now) {
-  if (!j.simulated_vehicles || !j.simulated_vehicles.length) return;
-  j.simulated_vehicles = j.simulated_vehicles.filter(function(id) { return j.vehicles.some(function(v) { return v.vehicle_id === id; }); });
-  if (!j.simulation_green_since) j.simulation_green_since = {};
+
+export function simulateDepartures(junction, now, enabled) {
+  if (enabled === undefined) {
+    enabled = isTrafficSimulationEnabled();
+  }
+  if (!enabled) {
+    junction.simulation_green_since = {};
+    return;
+  }
+  if (!junction.simulation_green_since) {
+    junction.simulation_green_since = {};
+  }
+
   for (const direction of directions) {
-    if (!j.green_confirmation || j.pending || j.stage !== "GREEN" || ["FAILURE", "RECOVERY"].includes(j.mode) || j.actual_signals[direction] !== "GREEN" || j.sensor_status[direction] === "OFFLINE") {
-      delete j.simulation_green_since[direction]; continue;
+    // A request is not enough: departures need confirmed GREEN and healthy devices.
+    if (!junction.green_confirmation || junction.pending || junction.stage !== "GREEN") {
+      delete junction.simulation_green_since[direction];
+      continue;
     }
-    let timer = j.simulation_green_since[direction];
-    if (!timer || timer.command_id !== j.green_confirmation.command_id) {
-      timer = { command_id: j.green_confirmation.command_id, since: now };
-      j.simulation_green_since[direction] = timer;
+    if (junction.mode === "FAILURE" || junction.mode === "RECOVERY") {
+      delete junction.simulation_green_since[direction];
+      continue;
     }
-    if (now - timer.since < 3000) continue;
-    const vehicle = j.vehicles.find(function(v) { return v.direction === direction && j.simulated_vehicles.includes(v.vehicle_id); });
-    if (vehicle) sensorEvent(j, eventFor(j, vehicle.vehicle_id, direction, vehicle.vehicle_type, now, "VEHICLE_CLEARED"), now);
+    if (
+      junction.actual_signals[direction] !== "GREEN" ||
+      junction.sensor_status[direction] === "OFFLINE"
+    ) {
+      delete junction.simulation_green_since[direction];
+      continue;
+    }
+
+    let vehicle = null;
+    for (const waiting of junction.vehicles) {
+      if (waiting.direction === direction) {
+        vehicle = waiting;
+        break;
+      }
+    }
+    if (!vehicle) {
+      // Empty roads do not accumulate unused departure slots.
+      delete junction.simulation_green_since[direction];
+      continue;
+    }
+
+    const confirmation = junction.green_confirmation;
+    let timer = junction.simulation_green_since[direction];
+    if (!timer || timer.command_id !== confirmation.command_id) {
+      timer = { command_id: confirmation.command_id, since: now };
+      junction.simulation_green_since[direction] = timer;
+    }
+    const readyAt = Math.max(timer.since, vehicle.received_at) + 3000;
+    if (now < readyAt) {
+      continue;
+    }
+
+    // Simulate the exit sensor. The engine handles the actual queue removal.
+    const event = eventFor(junction, vehicle, now, "VEHICLE_CLEARED");
+    sensorEvent(junction, event, now);
     timer.since = now;
   }
 }

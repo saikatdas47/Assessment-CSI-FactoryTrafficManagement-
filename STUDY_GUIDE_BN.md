@@ -1,87 +1,118 @@
-# কোড বুঝে বলার ছোট গাইড
+# প্রজেক্ট বোঝার সহজ গাইড
 
-## Request কীভাবে চলে?
+## ১. কী বানানো হয়েছে?
 
-Browser -> routes -> controller -> junctionService -> trafficEngine -> storageService -> response.
+কারখানার একটি রাস্তার মোড়ে কোন দিকের গাড়ি কখন যাবে, backend সেটা ঠিক করে। Frontend backend-এর সিদ্ধান্ত দেখায়। গাড়ি আসা, গাড়ি চলে যাওয়া, signal confirmation, emergency ও failure—এগুলো event। তাই এটি শুধু CRUD নয়।
 
-`index.js` প্রথমে .env পড়ে, storage connect করে, পুরোনো junction load করে এবং recovery শুরু করে। তারপর server চালায়। `app.js` Express app বানায়। Route শুধু ঠিক করে কোন function চলবে। Controller input যাচাই করে।
+NORTH মানে উত্তর দিক থেকে মোড়ে আসা গাড়ি; সাধারণ straight movement-এ সেটা দক্ষিণের দিকে যাবে। SOUTH-এর গাড়ি উত্তরে যাবে। দুই দিকে আলাদা lane ধরা হয়েছে। তাই NORTH/SOUTH একসঙ্গে GREEN হতে পারে। EAST/WEST-ও একইভাবে। বাঁক নেওয়া বা pedestrian movement এই ছোট model-এ নেই।
 
-## গাড়ি এলে
+## ২. চালিয়ে দেখবে কীভাবে?
 
-`sensorEvent()` প্রথমে event ID দেখে। একই event আবার এলে queue বাড়ায় না। একই ID কিন্তু তথ্য ভিন্ন হলে conflict হয়। তারপর direction-এর sequence দেখে; পুরোনো sequence বাদ দেয়। গাড়ি নতুন হলে vehicles array-তে রাখে। Clearance এলে নির্দিষ্ট গাড়িটি সরায়। Queue count এই array থেকে হিসাব হয়।
+Backend-এ `npm run dev`, frontend-এ `npm run dev`। http://localhost:5173 খুলবে। Normal traffic, Truck priority বা Emergency card একবার চাপো। গাড়ি queue-তে আসবে, backend signal ঠিক করবে, GREEN পাওয়া গাড়ি নিজে থেকে queue ছাড়বে। নিজে গাড়ি যোগ করার form-ও আছে।
 
-## Traffic engine
+Demo-তে **সব waiting গাড়ির নিয়ম একই**: পুরোনো, নতুন, preset, manual form বা API—যেখান থেকেই আসুক। প্রতি GREEN direction-এ তিন সেকেন্ডে একটি গাড়ি ছাড়ে। Simulator `VEHICLE_CLEARED` event পাঠায়; engine matching গাড়ি সরায়। Frontend নিজে queue কমায় না। RED/YELLOW, pending ACK, failure/recovery বা sensor OFFLINE হলে departure বন্ধ।
 
-`choose()` ঠিক করে কোন phase আগে যাবে। Emergency আগে; তারপর valid manual request; তারপর priority weight ও অপেক্ষার সময়। `advance()` সিদ্ধান্ত অনুযায়ী signal transition এগিয়ে নেয়। `request()` physical controller-এর জন্য unique command তৈরি করে। `acknowledge()` শুধু বর্তমান command-এর সঠিক confirmation গ্রহণ করে।
+`TRAFFIC_SIMULATION=false` দিলে automatic departure বন্ধ। তখন আসল sensor বা Clear vehicle দিয়ে গাড়ি চলে যাওয়ার খবর দিতে হবে। `simulated` field পুরোনো event contract-এর metadata; এখন ওই flag দিয়ে গাড়ি ছাড়া/আটকানো হয় না।
 
-GREEN থেকে conflicting GREEN হয় না। আগে YELLOW confirm, পাঁচ সেকেন্ড অপেক্ষা, ALL_RED confirm, দুই সেকেন্ড clearance, তারপর পরের GREEN। `deadline` হচ্ছে কখন পরের ধাপে যাওয়া যাবে। Background tick সময় পরীক্ষা করে; request handler-এ sleep করে না।
+## ৩. কোন file আগে পড়বে?
 
-## Desired বনাম actual
+| File | কী করে |
+| --- | --- |
+| backend/index.js | App চালু, database connection, startup recovery, background tick |
+| backend/app.js | Express app, middleware, routes, errors, built frontend |
+| backend/routes/junctionRoutes.js | কোন URL-এ কোন controller চলবে |
+| backend/controllers/junctionController.js | Input check করে service-কে কাজ দেয় |
+| backend/services/junctionService.js | একই junction-এর কাজ একে একে চালায় ও save করে |
+| backend/services/trafficEngine.js | আসল traffic নিয়ম |
+| backend/services/trafficSimulator.js | Preset arrivals ও সবার departure sensor simulation |
+| backend/services/controllerSimulator.js | Physical controller-এর বদলে ACK পাঠায় |
+| backend/services/storageService.js | MongoDB/local file থেকে load ও save |
+| backend/models/Junction.js | Database document-এর schema |
+| backend/config/trafficConfig.js | Direction, phase, weight ও সময় |
+| backend/utils/validation.js | Event-এর fields ঠিক আছে কি না |
 
-Desired হলো backend যা চায়। Actual হলো controller শেষ যা নিশ্চিত করেছে। পাঠানো command মানেই কাজ হয়ে গেছে নয়। Timeout হলে actual UNKNOWN, mode FAILURE। ALL_RED command পাঠানো হয়; controller না শুনলে সত্যি RED হয়েছে দাবি করি না।
+## ৪. একটি request-এর যাত্রা
 
-## একসঙ্গে দুটি request
+Vehicle arrives চাপলে frontend POST `/api/sensor-events` করে। Route controller-এ পাঠায়। Controller fields যাচাই করে। Service ওই junction-এর আগের কাজ শেষ হওয়ার জন্য অপেক্ষা করে। Saved state-এর copy বানায়। Engine event গ্রহণ করে, queue ও history বদলায়, প্রয়োজন হলে signal command তৈরি করে। Service database save করে। Save সফল হলে memory update করে। Dashboard পরের poll-এ সেই state দেখায়।
 
-`junctionService.run()` একই junction-এর কাজ একটি Promise chain-এ রাখে। একটি শেষ হলে পরেরটি চলে। Saved state-এর copy বদলায়, save সফল হলে memory update করে। তাই queue এবং processed event record একই snapshot-এ থাকে। MongoDB-তে একটি document replacement atomic; এখানে বহু collection-এর transaction লাগে না। একাধিক backend instance চালানো এই design-এ অনুমোদিত নয়।
+এভাবে database save fail করলে copy-র পরিবর্তন live state হয় না। Queue, processed event ID ও history একসঙ্গে save হয়।
 
-## Restart
+## ৫. Traffic engine-এর functions
 
-গাড়ি, history, event IDs ও mode persist হয়। Restart-এর পরে পুরোনো physical signal সত্য ধরে নেওয়া হয় না। Actual UNKNOWN করে fresh ALL_RED confirmation নেয়। পুরোনো ACK-এর command ID আর মেলে না।
+- `createJunction()` একটি মোড়ের শুরুর state তৈরি করে।
+- `sensorEvent()` arrival, clearance, duplicate ও sequence সামলায়।
+- `choose()` emergency, manual বা normal score থেকে পরের phase বেছে নেয়।
+- `advance()` সময় ও সিদ্ধান্ত দেখে transition এগিয়ে নেয়।
+- `request()` unique physical command তৈরি করে।
+- `acknowledge()` current command-এর matching confirmation নেয়।
+- `fail()` traffic থামিয়ে physical state UNKNOWN করে।
+- `recover()` fresh safe confirmation দিয়ে ফেরার প্রস্তুতি নেয়।
+- `deviceEvent()` sensor/signal/controller ONLINE বা OFFLINE খবর নেয়।
+- `status()` vehicle array গুনে প্রতিটি direction-এর queue জানায়।
+- `record()` গুরুত্বপূর্ণ ঘটনার history রাখে।
 
-## কেন plain JavaScript frontend?
+## ৬. Priority হিসাব
 
-Vite development server ও build দেয়। HTML/CSS/JavaScript dashboard-এর জন্য যথেষ্ট। Frontend শুধু API call ও render করে; traffic সিদ্ধান্ত নেয় না। Text rendering-এ textContent ব্যবহার করা হয় যাতে vehicle ID-তে HTML দিলে সেটা execute না হয়।
+Truck weight ৩, forklift/material ২, employee ১। প্রতিটি গাড়ির score:
 
-## Review-তে সৎভাবে বলবে
+```text
+weight × 10000 + scheduling waiting milliseconds
+```
 
-এটি REST simulator, real hardware controller নয়। Database configuration না দিলে local persistent demo চলে। MongoDB Atlas authentication, live write, restart-এর পর persisted state ও duplicate handling যাচাই করা হয়েছে। Submission ZIP-এ নিজের private URI দিতে হবে। Normal starvation protection emergency/manual/failure-এর সময়ে guarantee নয়। History ও processed IDs বড় হলে আলাদা durable log দরকার। nodemon development dependency-এর transitive advisory README-তে লেখা আছে।
+এক phase-এর গাড়িগুলোর score যোগ হয়। বেশি score আগে সুযোগ পায়। সমান হলে বর্তমান phase থাকে। Integer হিসাব ব্যবহার করি যাতে দশমিক rounding-এর কারণে অপ্রয়োজনীয় switch না হয়।
 
+গাড়ির scheduling wait হলো server-এ আসার সময় এবং ওই phase-এর শেষ confirmed GREEN—এই দুই সময়ের পরেরটি থেকে অপেক্ষা। Dashboard-এ original arrival age দেখায়। অন্য phase অন্তত ৯০ সেকেন্ড সুযোগ না পেলে পরের normal সুযোগে আগে যায়। তবে YELLOW/ALL_RED সময় বাদ যাবে না।
 
-## কোন phase আগে পাবে—সহজ উদাহরণ
+Priority phase বেছে দেয়। একই lane-এর গাড়ি FIFO-তে যায়—আগে আসা গাড়ি আগে। Truck পিছনে থাকলে শুধু weight-এর কারণে সামনে থাকা গাড়ির ওপর দিয়ে যাবে না।
 
-একটি EAST truck-এর weight ৩; একটি NORTH employee car-এর weight ১। প্রতিটি গাড়ির scheduling অপেক্ষার প্রতি ১০ সেকেন্ডে score ১ বাড়ে। যে phase শেষবার GREEN পেয়েছে, তার scheduling অপেক্ষা সেই সময় থেকে আবার গণনা হয়। গাড়ি কিন্তু queue থেকে সরবে কেবল clearance event এলে। তাই পুরোনো গাড়ি queue-তে পড়ে থাকলেও বারবার নিজের phase-কে জেতাতে পারে না। Conflicting phase ৯০ সেকেন্ড সুযোগ না পেলে পরের স্বাভাবিক সুযোগে আগে যায়। GREEN-এর ৩০ সেকেন্ড minimum এবং safety transition তখনও মানতে হয়। Emergency ও manual control থাকলে এই স্বাভাবিক fairness সাময়িক বন্ধ থাকে।
+## ৭. GREEN কেন সরাসরি বদলায় না?
 
-## Failure থেকে ফেরার নিয়ম
+NORTH/SOUTH GREEN থাকলে EAST/WEST সঙ্গে সঙ্গে GREEN করা বিপজ্জনক। নিয়ম:
 
-Controller ONLINE হলেও আলাদা SIGNAL OFFLINE হতে পারে। Failed signal থাকলে পুরো junction-এর ACK সত্য ধরে নেওয়া যাবে না। Failed sensor থাকলে তার নতুন vehicle event গ্রহণ করা হবে না। আগে সেই device ONLINE report করবে, তারপর recovery চাইবে। Recovery-তেও fresh ALL_RED ACK ও clearance লাগে। একই OFFLINE report বারবার পাঠালে নতুন command বানিয়ে timeout পিছিয়ে দেওয়া হয় না। Manual request failure-এর মধ্যেও মেয়াদ শেষ হয়।
+```text
+GREEN → YELLOW confirmation → ৫ সেকেন্ড
+→ ALL_RED confirmation → ২ সেকেন্ড
+→ পরের GREEN confirmation
+```
 
-## Frontend-এর দায়িত্ব
+Normal GREEN minimum ৩০ সেকেন্ড। Emergency/manual আগে transition চাইতে পারে, কিন্তু clearance বাদ দিতে পারে না। `deadline` বলে কখন পরের ধাপ সম্ভব। ২৫০ ms background tick সময় পরীক্ষা করে; HTTP handler ঘুমিয়ে থাকে না।
 
-Dashboard প্রতি সেকেন্ডে API থেকে তথ্য আনে। আট সেকেন্ডেও response না এলে error দেখায়। Backend বন্ধ হলে পুরোনো signal-কে stale দেখিয়ে action buttons বন্ধ করে; reconnect হলে আবার চালু করে। Junction বদলালে আগের junction-এর দেরিতে আসা response নতুন junction-এর screen বদলাতে পারে না। নতুন junction API দিয়ে বানানো যায়; dashboard-এ বাড়তি form রাখা হয়নি।
+## ৮. Desired, actual ও ACK
 
-## পরীক্ষায় কী দেখা হয়েছে
+Desired মানে backend যা চায়। Actual মানে controller যা নিশ্চিত করেছে। `command_id` দিয়ে কোন request-এর উত্তর সেটা মিলাই। চার direction-এর পুরো map মেলাতে হয়। Wrong map/NACK/timeout হলে FAILURE। Actual UNKNOWN মানে আমরা physical light নিশ্চিত নই।
 
-আগের run-এর historical verification: ৪৬টি backend test, ১৪টি frontend test এবং আলাদা live Atlas test pass করার নোট ছিল। বর্তমান result নিচে দেওয়া আছে। একটি test-এ ১,০০০ mixed operation-এর পরও safety invariant পরীক্ষা হয়েছে। Browser-এ emergency, manual, duplicate, clearance, failure, recovery এবং server বন্ধ/চালু করা পরীক্ষা হয়েছে। বিস্তারিত TEST_REPORT.md-এ আছে। এগুলো real hardware certification নয়; একটি backend process ও REST simulator-এর যাচাই।
+Known controller OFFLINE থাকলে recovery বা ACK দিয়ে status মুছে চলতে পারবে না। আগে ONLINE report, তারপর recovery, fresh ALL_RED ACK, দুই সেকেন্ড clearance। ONLINE report নিজে traffic resume করে না। Startup-এর UNKNOWN controller fresh confirmation দিয়ে ONLINE হতে পারে।
 
+## ৯. Emergency ও manual
 
-## পাঁচ ধরনের গাড়ি ও সহজ dashboard
+Emergency সব normal/manual traffic-এর আগে। Oldest server-accepted emergency আগে; একই সময়ে এলে যে event আগে গ্রহণ হয়েছে সেটা আগে। Emergency চলে গেলে valid manual intent ফিরে আসে; না থাকলে automatic। Emergency ১৮০ সেকেন্ডের বেশি থাকলে failure হয়, গাড়ি silently delete হয় না।
 
-Scenario-তে পাঁচটি category, API example-এ চারটি নাম ছিল। এখন Forklift, Delivery truck, Material-carrying vehicle, Employee transport এবং Emergency—পাঁচটিই visible radio choice। Backend-এ material গাড়ির নাম MATERIAL_VEHICLE, weight ২; forklift-এর সমান। Truck ৩, employee ১; emergency আলাদা সর্বোচ্চ priority পায়।
+Manual request ৬০ সেকেন্ড থাকে। শেষ accepted request আগেরটি বদলায়। Return to automatic manual intent সরায়, emergency বা fault সরায় না।
 
-Dashboard-এর ধাপগুলো হলো: junction দেখো → vehicle ID/direction/type দিয়ে arrival দাও → queue row থেকে clearance দাও → দরকার হলে আলাদা direction দিয়ে manual green চাও → device fault হলে সেই device/direction restore করে recovery চাও। Vehicle direction বদলালে manual বা device direction বদলায় না। Controller ACK test দরকার হলেই তার আলাদা section খুলবে। Emergency banner সবসময় ওপরেই থাকে। UNKNOWN signal দেখালে সেটা থেমে আছে দাবি করি না।
+## ১০. Duplicate ও পুরোনো event
 
+`event_id` একবার process হলে exact duplicate queue বদলায় না। একই ID-তে payload বদলালে 409। প্রতিটি direction-এর `sequence_no` বাড়তে হবে; পুরোনো/equal sequence ignore ও audit হয়। Unknown clearance queue negative করে না।
 
-## সর্বশেষ UI সরলীকরণ
+Sensor timestamp সংরক্ষণ হয়, কিন্তু waiting-এর জন্য server time লাগে। Sensor clock ভুল হলেও scheduling পুরোনো sensor time দিয়ে priority পায় না। Legacy processed IDs retain হয়; সেগুলো replay করে গাড়ি ফিরিয়ে আনা হয় না।
 
-মূল screen-এ live intersection, vehicle/manual control, queues, controller/recovery এবং ছোট activity list আছে। বাড়তি navigation, নতুন junction বানানোর form ও raw JSON viewer সরানো হয়েছে। Duplicate, missing ACK/NACK এবং device fault পরীক্ষা দরকার হলে একটিমাত্র Test scenarios section খুলবে। Pending command দেখতে Controller & failure tests খুলবে। এই UI সরলীকরণের আগের নোটটি বর্তমান correctness changes-এর বিবরণ নয়।
+## ১১. একসঙ্গে request ও restart
 
+`Map` হলো ID দিয়ে value রাখার JavaScript collection। Service-এ junction-এর state এবং শেষ pending task রাখি। `Set` দিয়ে কোন junction ID create হচ্ছে সেটা মনে রাখি। `async/await` দিয়ে আগের কাজ ও database save শেষ হওয়া পর্যন্ত অপেক্ষা করি। নতুন framework নয়।
 
-## মূল calculation-এর সর্বশেষ পরীক্ষা
+Restart-এর পরে saved GREEN সত্য ধরে নেওয়া হয় না। পুরোনো command ও simulator timer বাতিল, actual UNKNOWN, নতুন ALL_RED command লাগে। Queue/history/event ID থাকে। Offline fault থাকলে FAILURE থাকে। নতুন confirmed GREEN ছাড়া গাড়ি ছাড়ে না।
 
-এক truck-এর score ৩.৩ আর তিন employee গাড়ির score-ও ৩.৩ হতে পারে। আগের দশমিক যোগে সামান্য rounding difference হয়ে অপ্রয়োজনীয় switch হচ্ছিল। এখন একই সূত্রে weight * ১০০০০ + waiting milliseconds হিসাব করি। দুই score সমান হলে বর্তমান phase থাকে।
+## ১২. Code পড়ার নিয়ম
 
-১,৩৪৯টি domain test pass করেছে, যার মধ্যে ১ লাখ mixed operation আছে। Green হওয়া মানে গাড়ি যেতে পারবে; queue থেকে গাড়ি সরানো হবে matching clearance event এলে। Starvation-এর ৯০ সেকেন্ড threshold পার হলে safe switch শুরু হবে—তারপরও yellow, all-red ও ACK সময় লাগবে। Test চালানোর নিয়ম TEST_REPORT.md-এ আছে।
+Functions, সাধারণ if/else, braces, for loop ও সাধারণ callback ব্যবহার করা হয়েছে। এক লাইনে অনেক কাজ রাখা হয়নি। `Object.hasOwn()` নিজের event ID আছে কি না দেখে। `Object.defineProperty()` special ID যেমন `__proto__` নিরাপদে সংরক্ষণ করে—এই safeguard বাদ দিলে object-এর prototype বদলে যেতে পারে। Regex UTC timestamp-এর format দেখে, পরে Date round-trip দিয়ে impossible date আটকায়। এগুলো validation-এর প্রয়োজনীয় JavaScript methods।
 
+## ১৩. Documentation ও পরীক্ষার কাজ
 
-### এক ক্লিকে simulation
-উপরের Normal traffic, Truck priority ও Emergency card চাপলে backend নির্দিষ্ট গাড়িগুলো queue-তে যোগ করে। Dashboard-এর নতুন simulated গাড়ি confirmed GREEN-এ প্রতি direction-এ ৩ সেকেন্ডে একটি করে ছাড়ে। আলাদা simulator VEHICLE_CLEARED event পাঠায়; domain নিজে গাড়ি চলে গেছে ধরে নেয় না। RED/YELLOW, pending ACK, failure বা recovery-তে গাড়ি ছাড়বে না। সাধারণ sensor API event-এ simulated flag না থাকলে আগের মতো explicit clearance লাগবে।
+README: setup, architecture, algorithm, assumptions, deployment ও AI usage। API.md: request JSON ও status codes। TEST_REPORT.md: সর্বশেষ test results ও coverage। এই গাইড: বোঝার জন্য। Tests source-এর অংশ; পুরোনো before-* backup প্রয়োজন নেই।
 
+Root-এ `npm test` backend ও frontend পরীক্ষা করে। Backend-এ `npm run test:atlas` আলাদা temporary database-এ persistence পরীক্ষা করে। Tests queue, duplicate, timing, emergency, manual, failure, restart ও concurrent requests যাচাই করে। বর্তমান সংখ্যা TEST_REPORT.md-এ দেখবে।
 
-### বর্তমান correctness verification — 2026-10-08
-৮টি নতুন regression test পুরোনো code-এ fail করেছে, fixes-এর পরে pass করেছে। বর্তমান isolated backend suite: ১,৩৭০ pass, ০ fail, ১ Atlas test skipped। Atlas আলাদা disposable database-এ ১ pass। Frontend ১৪ pass এবং build সফল। এই run-এ live browser বা working database verification করা হয়নি।
+## ১৪. সীমাবদ্ধতা ও review-তে কী বলবে?
 
-Controller OFFLINE মানে যোগাযোগ বন্ধ জানা আছে। UNKNOWN মানে physical confirmation নেই। Recovery OFFLINE মুছবে না: আগে Physical controller বেছে ONLINE report, তারপর recovery, fresh ALL_RED ACK ও ২ সেকেন্ড clearance। ONLINE report নিজে traffic চালু করে না। Fresh startup-এর UNKNOWN controller matching ALL_RED ACK দিয়ে ONLINE হতে পারে; AUTO_ACK এটি simulate করতে পারে। Known OFFLINE controller-এর জন্য তা নিষিদ্ধ।
+এটি AI-assisted assessment demo, real physical hardware নয়। একটি backend process state-এর owner। Mongoose Mixed পুরো nested schema validate করে না; controller/domain checks করে। History ও processed IDs বড় হলে আলাদা storage দরকার। বাস্তব controller watchdog, heartbeat, authentication, MQTT ও distributed locking এখানে নেই। এগুলো বোঝা এবং নিজের ভাষায় explain করা প্রয়োজন।
 
-Restart-এ offline device থাকলেও নতুন ALL_RED command ID তৈরি হয়; পুরোনো ACK ignored, actual signals UNKNOWN, valid manual intent/queues/IDs/history থাকে। Expired manual intent বাদ যায়। Accepted GREEN command ID-র সঙ্গে departure interval বাঁধা: failure/recovery/restart/transition আগের timer invalidate করে; নতুন confirmation-এর পরে পুরো ৩ সেকেন্ড লাগবে।
-
-Optional simulated boolean; omitted এবং false একই payload। একই ID-তে false থেকে true করলে 409। পুরোনো fingerprint-এর ID replay হয় না: matching omitted/false duplicate ignored, true বা changed core payload conservatively 409। Equal-time emergency-তে serialized acceptance/insertion order আগে। Applied arrival/clearance ও scenario 201; ignored/duplicate 200; conflict 409। Mongoose Mixed নিজে পুরো domain schema enforce করে না।
+Render-এ frontend build `frontend/dist` হয়; Express একই URL থেকে dashboard/API serve করে। MongoDB URI private environment-এ দিতে হবে, ZIP বা GitHub-এ নয়।
