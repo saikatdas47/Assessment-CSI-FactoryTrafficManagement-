@@ -1,6 +1,7 @@
 # Factory Traffic Management System
 
 CSI Smart Tech Backend Developer Intern assessment. Node.js, Express, MongoDB/Mongoose, nodemon, Vite and plain JavaScript. Junction A is the default dashboard; Admin can add and open additional junctions using the same engine.
+live Demo: https://assessment-csi-factorytrafficmanagement.onrender.com
 
 ## Setup and run
 
